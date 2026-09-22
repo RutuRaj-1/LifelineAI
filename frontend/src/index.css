@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+
+body {
+  @apply bg-navy-50 text-navy-900 font-sans antialiased;
+}
+
+.card { @apply bg-white rounded-lg border border-navy-900/10 shadow-card; }
+.btn { @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed; }
+.btn-primary { @apply btn bg-teal-600 text-white hover:bg-teal-700; }
+.btn-secondary { @apply btn bg-white text-navy-700 border border-navy-900/15 hover:bg-navy-50; }
+.btn-danger { @apply btn bg-coral-500 text-white hover:bg-red-600; }
+.input { @apply w-full rounded-md border border-navy-900/15 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500; }
+.label { @apply block text-xs font-medium text-navy-700/70 mb-1; }
+.pill { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium; }
+
+@keyframes heartbeat-draw {
+  from { stroke-dashoffset: 1000; }
+  to { stroke-dashoffset: 0; }
+}
+
+.heartbeat-line {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: heartbeat-draw 2.5s ease-in-out infinite;
+}

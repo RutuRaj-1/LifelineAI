@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+backend/lifeline.db
+backend/lifeline.db-wal
+backend/lifeline.db-shm
+backend/test.db
+backend/uploads/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Env
+.env
+
+# OS
+.DS_Store

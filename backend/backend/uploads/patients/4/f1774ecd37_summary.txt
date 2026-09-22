@@ -1,0 +1,13 @@
+Patient: Test User
+Report Type: Discharge Summary
+
+Past Medical History:
+- Hypertension
+
+Known Allergies: Penicillin
+
+Current Medications:
+- Amlodipine 5mg once daily
+
+Risk Flags:
+- History of stroke

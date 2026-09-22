@@ -1,0 +1,4 @@
+# Only needed for the real Firebase Storage backend (STORAGE_BACKEND=firebase)
+firebase-admin>=6.5
+# Only needed for DocTR OCR fallback (heavy: pulls in PyTorch)
+python-doctr[torch]>=0.9
