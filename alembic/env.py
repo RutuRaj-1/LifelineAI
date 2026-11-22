@@ -22,14 +22,15 @@ if config.config_file_name is not None:
 # Import models and Base metadata
 try:
     from backend.app.config import get_settings
-    from backend.app.db import Base
+    from backend.app.db import Base, NAMING_CONVENTION
     import backend.app.models  # noqa: F401 - registers all tables on Base.metadata
 except ImportError:
     from app.config import get_settings
-    from app.db import Base
+    from app.db import Base, NAMING_CONVENTION
     import app.models  # noqa: F401
 
 target_metadata = Base.metadata
+target_metadata.naming_convention = NAMING_CONVENTION
 
 
 def get_url() -> str:
