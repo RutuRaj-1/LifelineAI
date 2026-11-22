@@ -6,6 +6,9 @@ import {
   HospitalCapability,
   HospitalDepartment,
   HospitalProfile,
+  OperationalResource,
+  ResourceHistoryResponse,
+  ResourceStatusHistory,
 } from "../lib/api";
 import { useEmergencyEvents } from "../lib/ws";
 import { TYPE_LABEL, priorityLabel, timeAgo } from "../lib/format";
@@ -22,7 +25,7 @@ interface Scenario {
   emergency_type: string;
 }
 
-type TabKey = "queue" | "profile" | "departments" | "capabilities";
+type TabKey = "queue" | "resources" | "profile" | "departments" | "capabilities";
 
 export default function HospitalDashboard() {
   const [activeTab, setActiveTab] = useState<TabKey>("queue");
@@ -40,6 +43,22 @@ export default function HospitalDashboard() {
   const [capabilities, setCapabilities] = useState<HospitalCapability[]>([]);
   const [loadingRegistry, setLoadingRegistry] = useState(false);
   const [registryMessage, setRegistryMessage] = useState<string | null>(null);
+
+  // Operational Resource Intelligence (Prompt 06)
+  const [operationalResources, setOperationalResources] = useState<OperationalResource[]>([]);
+  const [resourceFilter, setResourceFilter] = useState<string>("ALL");
+  const [attestModalResource, setAttestModalResource] = useState<OperationalResource | null>(null);
+  const [attestForm, setAttestForm] = useState({
+    staffed_capacity: 0,
+    occupied_count: 0,
+    maintenance_count: 0,
+    operational_status: "FUNCTIONAL",
+    status_source: "STAFF_ATTESTED",
+    remarks: "",
+  });
+  const [historyModalResource, setHistoryModalResource] = useState<OperationalResource | null>(null);
+  const [historyData, setHistoryData] = useState<ResourceStatusHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Department creation form state
   const [deptForm, setDeptForm] = useState({
@@ -79,17 +98,27 @@ export default function HospitalDashboard() {
     api.get<Resource[]>("/hospital/resources").then(setResources).catch(() => {});
   }, []);
 
+  const loadOperationalResources = useCallback(() => {
+    api.get<OperationalResource[]>("/hospital/resources")
+      .then((rows) => {
+        setOperationalResources(rows);
+      })
+      .catch(() => {});
+  }, []);
+
   const loadRegistry = useCallback(() => {
     setLoadingRegistry(true);
     Promise.all([
       api.get<HospitalProfile>("/hospital/profile"),
       api.get<HospitalDepartment[]>("/hospital/departments"),
       api.get<HospitalCapability[]>("/hospital/capabilities"),
+      api.get<OperationalResource[]>("/hospital/resources"),
     ])
-      .then(([prof, depts, caps]) => {
+      .then(([prof, depts, caps, resList]) => {
         setProfile(prof);
         setDepartments(depts);
         setCapabilities(caps);
+        setOperationalResources(resList);
         setProfileForm({
           name: prof.name || "",
           phone: prof.phone || "",
@@ -106,15 +135,22 @@ export default function HospitalDashboard() {
 
   useEffect(() => {
     refreshQueue();
-  }, [refreshQueue]);
+    loadOperationalResources();
+  }, [refreshQueue, loadOperationalResources]);
 
   useEffect(() => {
-    if (activeTab !== "queue") {
+    if (activeTab === "resources") {
+      loadOperationalResources();
+    } else if (activeTab !== "queue") {
       loadRegistry();
     }
-  }, [activeTab, loadRegistry]);
+  }, [activeTab, loadRegistry, loadOperationalResources]);
 
-  useEmergencyEvents(() => refreshQueue());
+  useEmergencyEvents(() => {
+    refreshQueue();
+    loadOperationalResources();
+  });
+
   useEffect(() => {
     api.get<Scenario[]>("/demo/scenarios").then(setScenarios).catch(() => {});
   }, []);
@@ -222,6 +258,53 @@ export default function HospitalDashboard() {
     }
   }
 
+  function openAttestModal(r: OperationalResource) {
+    setAttestModalResource(r);
+    setAttestForm({
+      staffed_capacity: r.staffed_capacity,
+      occupied_count: r.occupied_count,
+      maintenance_count: r.maintenance_count,
+      operational_status: r.operational_status,
+      status_source: "STAFF_ATTESTED",
+      remarks: "",
+    });
+  }
+
+  async function handleAttestSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!attestModalResource) return;
+    try {
+      await api.post(`/hospital/resources/${attestModalResource.id}/attest`, attestForm);
+      setAttestModalResource(null);
+      loadOperationalResources();
+      refreshQueue();
+      setRegistryMessage(`Operational attestation recorded for ${attestModalResource.resource_type}.`);
+      setTimeout(() => setRegistryMessage(null), 4000);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to submit attestation");
+    }
+  }
+
+  async function openHistoryModal(r: OperationalResource) {
+    setHistoryModalResource(r);
+    setLoadingHistory(true);
+    try {
+      const resp = await api.get<ResourceHistoryResponse>(`/hospital/resources/${r.id}/history`);
+      setHistoryData(resp.items);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to fetch history");
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  const filteredResources = operationalResources.filter((r) => {
+    if (resourceFilter === "FUNCTIONAL") return r.operational_status === "FUNCTIONAL";
+    if (resourceFilter === "FRESH") return r.freshness_status === "FRESH";
+    if (resourceFilter === "STALE") return r.freshness_status === "STALE" || r.freshness_status === "UNKNOWN";
+    return true;
+  });
+
   return (
     <div className="mx-auto max-w-6xl px-5 py-8">
       {/* Top Banner / Navigation */}
@@ -231,7 +314,7 @@ export default function HospitalDashboard() {
             {profile?.name || "Hospital Command Center"}
           </h1>
           <p className="text-xs text-navy-900/60">
-            {profile ? `${profile.city} · Type: ${profile.hospital_type} · Status: ${profile.status}` : "Emergency Readiness & Hospital Intelligence"}
+            {profile ? `${profile.city} · Type: ${profile.hospital_type} · Registry: ${profile.status}` : "Emergency Readiness & Hospital Intelligence"}
           </p>
         </div>
 
@@ -246,6 +329,16 @@ export default function HospitalDashboard() {
             }`}
           >
             🚨 Emergency Queue ({queue.length})
+          </button>
+          <button
+            onClick={() => setActiveTab("resources")}
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+              activeTab === "resources"
+                ? "bg-teal-700 text-white shadow-sm"
+                : "bg-navy-900/5 text-navy-900/70 hover:bg-navy-900/10"
+            }`}
+          >
+            🩺 Operational Resources ({operationalResources.length || resources.length})
           </button>
           <button
             onClick={() => setActiveTab("profile")}
@@ -363,8 +456,7 @@ export default function HospitalDashboard() {
                 </div>
                 <StatusStepper status={selected.status} />
                 <p className="text-sm text-navy-900/80">
-                  <span className="font-medium">Reported symptoms:</span> {selected.symptoms || "—"}
-                </p>
+                  <span className="font-medium">Reported symptoms:</span> {selected.symptoms || "—"}</p>
 
                 {selected.checklist && selected.checklist.length > 0 && (
                   <div>
@@ -418,7 +510,310 @@ export default function HospitalDashboard() {
         </>
       )}
 
-      {/* --- TAB 2: HOSPITAL PROFILE --- */}
+      {/* --- TAB 2: OPERATIONAL RESOURCES (Prompt 06) --- */}
+      {activeTab === "resources" && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="font-display text-xl font-bold text-navy-900">Live Resource Availability & Readiness</h2>
+              <p className="text-xs text-navy-900/60">
+                Staffed capacity, active emergency holds, maintenance deductions, and freshness audit trails.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-navy-900/60 font-medium">Filter:</span>
+              <select
+                value={resourceFilter}
+                onChange={(e) => setResourceFilter(e.target.value)}
+                className="rounded border border-navy-900/20 p-1.5 text-xs bg-white text-navy-900"
+              >
+                <option value="ALL">All Resources ({operationalResources.length})</option>
+                <option value="FUNCTIONAL">Functional Only</option>
+                <option value="FRESH">Fresh Attestation Only</option>
+                <option value="STALE">Stale / Unverified Only</option>
+              </select>
+              <button onClick={loadOperationalResources} className="btn-secondary text-xs">
+                🔄 Refresh
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-teal-50 p-3.5 text-xs text-teal-900 border border-teal-200">
+            <strong>Clinical Safety Principle:</strong> A vacant bed is not automatically usable.
+            Usable capacity is calculated strictly as: <span className="font-mono font-semibold">Usable = Staffed - Occupied - Maintenance - Active Holds</span>.
+            Resources with expired freshness windows require staff re-attestation before accepting emergency referrals.
+          </div>
+
+          {/* Operational Resources Cards Grid */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredResources.map((r) => {
+              const isFresh = r.freshness_status === "FRESH";
+              const isSuspended = r.freshness_status === "SUSPENDED" || r.operational_status === "MAINTENANCE";
+              return (
+                <div key={r.id} className="card p-5 space-y-4 border border-navy-900/10">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-display text-base font-bold text-navy-900">
+                        {r.resource_type.replace(/_/g, " ")}
+                      </h3>
+                      <p className="text-[11px] text-navy-900/60">
+                        Dept: {r.department_name || "General Facility"}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <span
+                        className={`pill text-[10px] font-semibold ${
+                          isFresh
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                            : isSuspended
+                            ? "bg-red-100 text-red-800 border border-red-300"
+                            : "bg-amber-100 text-amber-800 border border-amber-300"
+                        }`}
+                      >
+                        {r.freshness_status}
+                      </span>
+                      <span className="text-[10px] text-navy-900/50">
+                        Status: {r.operational_status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Capacity Dashboard Stats */}
+                  <div className="rounded-lg bg-slate-50 p-3 border border-slate-200 grid grid-cols-2 gap-2 text-center">
+                    <div className="border-r border-slate-200 pr-2">
+                      <p className="text-2xl font-bold text-teal-700">{r.usable_capacity}</p>
+                      <p className="text-[10px] uppercase font-semibold text-navy-900/60">Usable Now</p>
+                    </div>
+                    <div className="pl-2">
+                      <p className="text-lg font-semibold text-navy-900">{r.staffed_capacity}<span className="text-xs text-navy-900/40">/{r.physical_capacity}</span></p>
+                      <p className="text-[10px] uppercase font-semibold text-navy-900/60">Staffed / Total</p>
+                    </div>
+                  </div>
+
+                  {/* Deductions Breakdown */}
+                  <div className="space-y-1 text-xs text-navy-900/70 border-t border-navy-900/10 pt-2">
+                    <div className="flex justify-between">
+                      <span>Occupied Beds / Units:</span>
+                      <span className="font-medium">{r.occupied_count}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Under Maintenance:</span>
+                      <span className="font-medium text-amber-700">{r.maintenance_count}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Active Referral Holds:</span>
+                      <span className="font-medium text-teal-700">{r.active_reserved_holds}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-navy-900/50 pt-1">
+                      <span>Last Attested:</span>
+                      <span>{r.last_verified_at ? timeAgo(r.last_verified_at) : "Never"} ({r.status_source})</span>
+                    </div>
+                  </div>
+
+                  {/* Action Controls */}
+                  <div className="flex gap-2 pt-2 border-t border-navy-900/10">
+                    <button
+                      onClick={() => openAttestModal(r)}
+                      className="btn-primary text-xs flex-1 text-center"
+                    >
+                      ✍️ Attest Status
+                    </button>
+                    <button
+                      onClick={() => openHistoryModal(r)}
+                      className="btn-secondary text-xs flex-1 text-center"
+                    >
+                      📜 Audit History
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {!filteredResources.length && (
+              <p className="card p-6 text-sm text-navy-900/50 sm:col-span-3 text-center">
+                No resources match the selected filter.
+              </p>
+            )}
+          </div>
+
+          {/* Attestation Modal */}
+          {attestModalResource && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/40 backdrop-blur-sm p-4">
+              <div className="card w-full max-w-lg p-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-navy-900/10 pb-3">
+                  <div>
+                    <h3 className="font-display text-lg font-bold text-navy-900">
+                      Attest Operational Capacity
+                    </h3>
+                    <p className="text-xs text-navy-900/60">
+                      Resource: {attestModalResource.resource_type} (Physical: {attestModalResource.physical_capacity})
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setAttestModalResource(null)}
+                    className="text-navy-900/50 hover:text-navy-900 text-sm font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleAttestSubmit} className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-navy-900">Staffed Capacity</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max={attestModalResource.physical_capacity}
+                        value={attestForm.staffed_capacity}
+                        onChange={(e) => setAttestForm({ ...attestForm, staffed_capacity: parseInt(e.target.value, 10) || 0 })}
+                        className="mt-1 w-full rounded border border-navy-900/20 p-2 text-sm text-center"
+                        required
+                      />
+                      <p className="text-[10px] text-navy-900/40 mt-0.5">Max: {attestModalResource.physical_capacity}</p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold text-navy-900">Occupied Units</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={attestForm.occupied_count}
+                        onChange={(e) => setAttestForm({ ...attestForm, occupied_count: parseInt(e.target.value, 10) || 0 })}
+                        className="mt-1 w-full rounded border border-navy-900/20 p-2 text-sm text-center"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold text-navy-900">Under Maintenance</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={attestForm.maintenance_count}
+                        onChange={(e) => setAttestForm({ ...attestForm, maintenance_count: parseInt(e.target.value, 10) || 0 })}
+                        className="mt-1 w-full rounded border border-navy-900/20 p-2 text-sm text-center"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-navy-900">Operational Status</label>
+                    <select
+                      value={attestForm.operational_status}
+                      onChange={(e) => setAttestForm({ ...attestForm, operational_status: e.target.value })}
+                      className="mt-1 w-full rounded border border-navy-900/20 p-2 text-sm bg-white"
+                    >
+                      <option value="FUNCTIONAL">Functional (Fully Operational)</option>
+                      <option value="LIMITED">Limited (Staffed with Constraints)</option>
+                      <option value="MAINTENANCE">Maintenance (Offline for Servicing)</option>
+                      <option value="NON_OPERATIONAL">Non-Operational (Emergency Divert)</option>
+                      <option value="UNSTAFFED">Unstaffed (No Clinical Personnel)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-navy-900">Attestation Rationale / Remarks</label>
+                    <textarea
+                      placeholder="e.g. Shift turnover completed, 2 beds sanitized and ready for triage..."
+                      value={attestForm.remarks}
+                      onChange={(e) => setAttestForm({ ...attestForm, remarks: e.target.value })}
+                      className="mt-1 w-full rounded border border-navy-900/20 p-2 text-xs"
+                      rows={2}
+                    />
+                  </div>
+
+                  {/* Live Formula Preview */}
+                  <div className="rounded bg-teal-50/60 p-2.5 text-xs text-teal-900 border border-teal-200">
+                    <span className="font-semibold">Calculated Usable Capacity: </span>
+                    <span className="font-mono font-bold text-sm">
+                      {attestForm.operational_status === "FUNCTIONAL" || attestForm.operational_status === "LIMITED"
+                        ? Math.max(0, attestForm.staffed_capacity - attestForm.occupied_count - attestForm.maintenance_count - attestModalResource.active_reserved_holds)
+                        : 0}
+                    </span>
+                    <span className="text-[11px] text-navy-900/60 block mt-0.5">
+                      Formula: {attestForm.staffed_capacity} (staffed) - {attestForm.occupied_count} (occupied) - {attestForm.maintenance_count} (maint) - {attestModalResource.active_reserved_holds} (holds)
+                    </span>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setAttestModalResource(null)}
+                      className="btn-secondary text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn-primary text-xs">
+                      Submit Official Attestation
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Audit History Modal */}
+          {historyModalResource && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/40 backdrop-blur-sm p-4">
+              <div className="card w-full max-w-2xl p-6 space-y-4 max-h-[85vh] flex flex-col">
+                <div className="flex items-center justify-between border-b border-navy-900/10 pb-3">
+                  <div>
+                    <h3 className="font-display text-lg font-bold text-navy-900">
+                      Audit Trail: {historyModalResource.resource_type}
+                    </h3>
+                    <p className="text-xs text-navy-900/60">
+                      Immutable append-only log of historical capacity attestations.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setHistoryModalResource(null)}
+                    className="text-navy-900/50 hover:text-navy-900 text-sm font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="overflow-y-auto space-y-2 flex-1 pr-1">
+                  {loadingHistory && <p className="text-xs text-navy-900/50 p-4 text-center">Loading audit history...</p>}
+                  {!loadingHistory && !historyData.length && (
+                    <p className="text-xs text-navy-900/50 p-6 text-center">No previous attestation history found.</p>
+                  )}
+                  {historyData.map((h) => (
+                    <div key={h.id} className="p-3 bg-slate-50 rounded border border-slate-200 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-navy-900">
+                          {h.previous_status || "INIT"} ➔ {h.new_status}
+                        </span>
+                        <span className="text-[11px] text-navy-900/40">
+                          {h.created_at ? new Date(h.created_at).toLocaleString() : "—"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-navy-900/70">
+                        <span>Capacity: <span className="font-mono">{h.previous_available_count ?? "—"} ➔ {h.new_available_count}</span></span>
+                        <span>Source: <span className="pill text-[9px]">{h.verification_source}</span></span>
+                        {h.verified_by_user_id && <span>Staff ID: #{h.verified_by_user_id}</span>}
+                      </div>
+                      {h.remarks && <p className="text-[11px] text-navy-900/60 italic">"{h.remarks}"</p>}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border-t border-navy-900/10 pt-3 flex justify-end">
+                  <button
+                    onClick={() => setHistoryModalResource(null)}
+                    className="btn-secondary text-xs"
+                  >
+                    Close History
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* --- TAB 3: HOSPITAL PROFILE --- */}
       {activeTab === "profile" && (
         <div className="card space-y-6 p-6">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-navy-900/10 pb-4">
@@ -537,7 +932,7 @@ export default function HospitalDashboard() {
         </div>
       )}
 
-      {/* --- TAB 3: DEPARTMENTS WORKSPACE --- */}
+      {/* --- TAB 4: DEPARTMENTS WORKSPACE --- */}
       {activeTab === "departments" && (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -552,7 +947,6 @@ export default function HospitalDashboard() {
             </button>
           </div>
 
-          {/* Department List */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {departments.map((d) => (
               <div key={d.id} className="card p-4 space-y-2">
@@ -657,7 +1051,7 @@ export default function HospitalDashboard() {
         </div>
       )}
 
-      {/* --- TAB 4: CAPABILITIES WORKSPACE --- */}
+      {/* --- TAB 5: CAPABILITIES WORKSPACE --- */}
       {activeTab === "capabilities" && (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4">

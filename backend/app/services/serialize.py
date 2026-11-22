@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -9,9 +9,12 @@ from ..models import (
     Hospital,
     HospitalCapability,
     HospitalDepartment,
+    HospitalResource,
     MedicalReport,
     Patient,
     PatientClinicalFact,
+    ResourceReservation,
+    ResourceStatusHistory,
 )
 
 
@@ -152,6 +155,92 @@ def capability_dict(c: HospitalCapability) -> dict:
         "verification_source": getattr(c, "verification_source", None),
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+    }
+
+
+def resource_dict(r: HospitalResource, active_holds: int = 0, detail: bool = False) -> dict:
+    staffed = r.staffed_capacity if r.staffed_capacity is not None else r.total
+    occupied = r.occupied_count or 0
+    maintenance = r.maintenance_count or 0
+
+    if r.operational_status in ("MAINTENANCE", "NON_OPERATIONAL", "UNSTAFFED", "CLOSED", "SUSPENDED"):
+        usable = 0
+    else:
+        usable = max(0, staffed - occupied - maintenance - active_holds)
+
+    if r.operational_status in ("SUSPENDED", "CLOSED"):
+        freshness = "SUSPENDED"
+    elif not r.last_verified_at:
+        freshness = "UNKNOWN"
+    else:
+        last_v = r.last_verified_at
+        if last_v.tzinfo is None:
+            last_v = last_v.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - last_v).total_seconds()
+        window = (r.freshness_window_minutes or 60) * 60
+        freshness = "FRESH" if age_seconds <= window else "STALE"
+
+    out = {
+        "id": r.id,
+        "hospital_id": r.hospital_id,
+        "department_id": r.department_id,
+        "department_name": r.department.department_name if r.department else None,
+        "resource_type": r.resource_type,
+        "total": r.total,
+        "physical_capacity": r.total,
+        "staffed_capacity": staffed,
+        "occupied_count": occupied,
+        "maintenance_count": maintenance,
+        "active_reserved_holds": active_holds,
+        "usable_capacity": usable,
+        "available": usable,  # synchronized legacy projection
+        "operational_status": r.operational_status,
+        "freshness_status": freshness,
+        "status_source": r.status_source,
+        "last_verified_at": r.last_verified_at.isoformat() if r.last_verified_at else None,
+        "freshness_window_minutes": r.freshness_window_minutes or 60,
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+    }
+    if detail:
+        out.update({
+            "verified_by_user_id": r.verified_by_user_id,
+        })
+    return out
+
+
+def resource_history_dict(h: ResourceStatusHistory) -> dict:
+    return {
+        "id": h.id,
+        "hospital_resource_id": h.hospital_resource_id,
+        "previous_status": h.previous_status,
+        "new_status": h.new_status,
+        "previous_available_count": h.previous_available_count,
+        "new_available_count": h.new_available_count,
+        "verification_source": h.verification_source,
+        "verified_by_user_id": h.verified_by_user_id,
+        "verified_at": h.verified_at.isoformat() if h.verified_at else None,
+        "remarks": h.remarks,
+        "created_at": h.created_at.isoformat() if h.created_at else None,
+    }
+
+
+def reservation_dict(res: ResourceReservation) -> dict:
+    return {
+        "id": res.id,
+        "referral_request_id": res.referral_request_id,
+        "hospital_resource_id": res.hospital_resource_id,
+        "resource_type": res.hospital_resource.resource_type if res.hospital_resource else None,
+        "quantity": res.quantity,
+        "reservation_status": res.reservation_status,
+        "held_at": res.held_at.isoformat() if res.held_at else None,
+        "expires_at": res.expires_at.isoformat() if res.expires_at else None,
+        "confirmed_at": res.confirmed_at.isoformat() if res.confirmed_at else None,
+        "confirmed_by_user_id": res.confirmed_by_user_id,
+        "released_at": res.released_at.isoformat() if res.released_at else None,
+        "release_reason": res.release_reason,
+        "idempotency_key": res.idempotency_key,
+        "created_at": res.created_at.isoformat() if res.created_at else None,
+        "updated_at": res.updated_at.isoformat() if res.updated_at else None,
     }
 
 

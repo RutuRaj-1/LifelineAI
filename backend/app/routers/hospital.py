@@ -9,6 +9,7 @@ from ..models import (
     HospitalCapability,
     HospitalDepartment,
     HospitalResource,
+    ResourceStatusHistory,
     User,
 )
 from ..schemas import (
@@ -20,11 +21,21 @@ from ..schemas import (
     HospitalDepartmentUserCreate,
     HospitalOut,
     HospitalProfileUpdate,
+    OperationalResourceOut,
     ReserveIn,
+    ResourceAttestationIn,
+    ResourceConfigUpdate,
 )
 from ..security import require_roles
-from ..services import ops
-from ..services.serialize import capability_dict, case_dict, department_dict, hospital_dict
+from ..services import ops, resource_service
+from ..services.serialize import (
+    capability_dict,
+    case_dict,
+    department_dict,
+    hospital_dict,
+    resource_dict,
+    resource_history_dict,
+)
 
 router = APIRouter(prefix="/hospital", tags=["Hospital"])
 
@@ -327,12 +338,166 @@ def submit_capability_review(
     return capability_dict(cap)
 
 
-# --- 4. Operational Resource & Emergency Queue Endpoints (Preserved) ---
+# --- 4. Operational Resource Management (Prompt 06) ---
 
 @router.get("/resources")
-def get_resources(user: User = Depends(require_roles("hospital", "doctor")), db: Session = Depends(get_db)):
-    rows = db.query(HospitalResource).filter(HospitalResource.hospital_id == user.hospital_id).all()
-    return [{"resource_type": r.resource_type, "total": r.total, "available": r.available} for r in rows]
+def get_resources(
+    department_id: int | None = Query(None, description="Filter by department"),
+    resource_type: str | None = Query(None, description="Filter by resource type"),
+    operational_status: str | None = Query(None, description="Filter by operational status"),
+    freshness_status: str | None = Query(None, description="Filter by freshness status (FRESH/STALE/UNKNOWN/SUSPENDED)"),
+    user: User = Depends(require_roles("hospital", "doctor")),
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve operational resources for the authenticated hospital staff.
+    Computes derived usable capacity, active holds, physical/staffed counts,
+    and freshness classification dynamically.
+    """
+    h = _get_user_hospital(db, user)
+    q = db.query(HospitalResource).filter(HospitalResource.hospital_id == h.id)
+    if department_id:
+        q = q.filter(HospitalResource.department_id == department_id)
+    if resource_type:
+        q = q.filter(HospitalResource.resource_type == resource_type.upper())
+    if operational_status:
+        q = q.filter(HospitalResource.operational_status == operational_status.upper())
+
+    rows = q.order_by(HospitalResource.resource_type.asc()).all()
+    results = []
+    for r in rows:
+        active_holds = resource_service.get_active_reserved_holds(db, r.id)
+        resource_service.sync_legacy_available(db, r, active_holds)
+        d = resource_dict(r, active_holds=active_holds, detail=True)
+        if freshness_status and d["freshness_status"] != freshness_status.upper():
+            continue
+        results.append(d)
+    return results
+
+
+@router.get("/resources/{resource_id}")
+def get_resource_detail(
+    resource_id: int,
+    user: User = Depends(require_roles("hospital", "doctor")),
+    db: Session = Depends(get_db),
+):
+    """Retrieve operational capacity and attestation details for a specific resource."""
+    h = _get_user_hospital(db, user)
+    r = db.get(HospitalResource, resource_id)
+    if not r or r.hospital_id != h.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Resource not found at your hospital.")
+
+    active_holds = resource_service.get_active_reserved_holds(db, r.id)
+    resource_service.sync_legacy_available(db, r, active_holds)
+    return resource_dict(r, active_holds=active_holds, detail=True)
+
+
+@router.post("/resources/{resource_id}/attest")
+def attest_resource_capacity(
+    resource_id: int,
+    body: ResourceAttestationIn,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Hospital staff operational attestation.
+    Validates capacity metrics, records append-only history, updates freshness,
+    and recalculates usable capacity transactionally.
+    """
+    h = _get_user_hospital(db, user)
+    r = db.get(HospitalResource, resource_id)
+    if not r or r.hospital_id != h.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Resource not found at your hospital.")
+
+    updated_resource = resource_service.attest_resource(
+        db=db,
+        resource=r,
+        user_id=user.id,
+        staffed_capacity=body.staffed_capacity,
+        occupied_count=body.occupied_count,
+        maintenance_count=body.maintenance_count,
+        operational_status=body.operational_status,
+        status_source=body.status_source or "MANUAL",
+        remarks=body.remarks or body.notes,
+        freshness_window_minutes=body.freshness_window_minutes,
+    )
+    active_holds = resource_service.get_active_reserved_holds(db, r.id)
+    return resource_dict(updated_resource, active_holds=active_holds, detail=True)
+
+
+@router.patch("/resources/{resource_id}")
+def update_resource_configuration(
+    resource_id: int,
+    body: ResourceConfigUpdate,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Update resource structural configuration (e.g. department link, physical total, freshness window).
+    Operational capacity metrics must be updated via the /attest endpoint.
+    """
+    h = _get_user_hospital(db, user)
+    r = db.get(HospitalResource, resource_id)
+    if not r or r.hospital_id != h.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Resource not found at your hospital.")
+
+    data = body.model_dump(exclude_unset=True)
+    if "department_id" in data and data["department_id"] is not None:
+        dept = db.get(HospitalDepartment, data["department_id"])
+        if not dept or dept.hospital_id != h.id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Department does not belong to your hospital.")
+        r.department_id = data["department_id"]
+
+    if "total" in data and data["total"] is not None:
+        if data["total"] < 0:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Physical total cannot be negative.")
+        r.total = data["total"]
+        if r.staffed_capacity is not None and r.staffed_capacity > r.total:
+            r.staffed_capacity = r.total
+
+    if "freshness_window_minutes" in data and data["freshness_window_minutes"] is not None:
+        r.freshness_window_minutes = data["freshness_window_minutes"]
+
+    r.updated_at = utc_now()
+    active_holds = resource_service.get_active_reserved_holds(db, r.id)
+    resource_service.sync_legacy_available(db, r, active_holds)
+    db.commit()
+    db.refresh(r)
+    return resource_dict(r, active_holds=active_holds, detail=True)
+
+
+@router.get("/resources/{resource_id}/history")
+def get_resource_history(
+    resource_id: int,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(require_roles("hospital", "doctor")),
+    db: Session = Depends(get_db),
+):
+    """Retrieve paginated append-only operational status history for a resource."""
+    h = _get_user_hospital(db, user)
+    r = db.get(HospitalResource, resource_id)
+    if not r or r.hospital_id != h.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Resource not found at your hospital.")
+
+    q = (
+        db.query(ResourceStatusHistory)
+        .filter(ResourceStatusHistory.hospital_resource_id == r.id)
+        .order_by(ResourceStatusHistory.created_at.desc())
+    )
+    total = q.count()
+    rows = q.offset(offset).limit(limit).all()
+    return {
+        "resource_id": r.id,
+        "resource_type": r.resource_type,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [resource_history_dict(h) for h in rows],
+    }
+
+
+# --- 5. Emergency Queue & Manual Reservation Endpoints (Preserved) ---
 
 
 @router.post("/reserve")

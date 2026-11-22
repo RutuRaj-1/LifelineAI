@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Hospital, HospitalCapability, HospitalDepartment
+from ..models import Hospital, HospitalCapability, HospitalDepartment, HospitalResource
+from ..services import resource_service
 from ..services.serialize import capability_dict, department_dict, hospital_dict
 
 router = APIRouter(prefix="/hospitals", tags=["Public Hospital Registry"])
@@ -124,4 +125,53 @@ def list_public_hospital_capabilities(
         "hospital_name": h.name,
         "capabilities": [capability_dict(c) for c in caps],
         "disclaimer": "Capability records indicate clinical service readiness claims, not live bed or staffed capacity.",
+    }
+
+
+@router.get("/{hospital_id}/resources")
+def list_public_hospital_resources(
+    hospital_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Public resource discovery endpoint.
+    Returns safe operational availability projection distinguishing fresh vs stale/unknown.
+    Suppresses private internal notes, staff IDs, and exact maintenance breakdown.
+    """
+    h = db.get(Hospital, hospital_id)
+    if not h:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Hospital not found.")
+
+    resources = (
+        db.query(HospitalResource)
+        .filter(HospitalResource.hospital_id == h.id)
+        .order_by(HospitalResource.resource_type.asc())
+        .all()
+    )
+
+    items = []
+    for r in resources:
+        active_holds = resource_service.get_active_reserved_holds(db, r.id)
+        usable = resource_service.calculate_usable_capacity(r, active_holds)
+        freshness = resource_service.calculate_freshness(r)
+
+        items.append({
+            "resource_type": r.resource_type,
+            "total": r.total,
+            "usable_capacity": usable,
+            "operational_status": r.operational_status,
+            "freshness_status": freshness,
+            "last_verified_at": r.last_verified_at.isoformat() if r.last_verified_at else None,
+            "is_confirmed_fresh": (freshness == "FRESH"),
+        })
+
+    return {
+        "hospital_id": h.id,
+        "hospital_name": h.name,
+        "resources": items,
+        "disclaimer": (
+            "Operational availability reflects latest hospital attestation and fluctuates in real time. "
+            "Critically ill patients must not self-route based solely on displayed numbers; "
+            "emergency coordination is required to hold resources."
+        ),
     }

@@ -234,6 +234,23 @@ class HospitalCapabilityOut(HospitalCapabilityBase):
 
 
 # Hospital Resource & Operational Schemas
+class ResourceAttestationIn(BaseModel):
+    staffed_capacity: int | None = Field(default=None, ge=0)
+    occupied_count: int = Field(default=0, ge=0)
+    maintenance_count: int = Field(default=0, ge=0)
+    operational_status: ResourceOperationalStatus = "FUNCTIONAL"
+    status_source: str = Field(default="MANUAL", max_length=40)
+    remarks: str | None = None
+    notes: str | None = None
+    freshness_window_minutes: int | None = Field(default=None, gt=0)
+
+
+class ResourceConfigUpdate(BaseModel):
+    department_id: int | None = None
+    total: int | None = Field(default=None, ge=0)
+    freshness_window_minutes: int | None = Field(default=None, gt=0)
+
+
 class HospitalResourceUpdate(BaseModel):
     operational_status: ResourceOperationalStatus | None = None
     staffed_capacity: int | None = Field(default=None, ge=0)
@@ -244,6 +261,42 @@ class HospitalResourceUpdate(BaseModel):
     status_source: str | None = Field(default=None, max_length=40)
     freshness_window_minutes: int | None = Field(default=None, gt=0)
     remarks: str | None = None
+
+
+class OperationalResourceOut(BaseModel):
+    id: int
+    hospital_id: int
+    department_id: int | None = None
+    department_name: str | None = None
+    resource_type: str
+    total: int
+    physical_capacity: int
+    staffed_capacity: int
+    occupied_count: int
+    maintenance_count: int
+    active_reserved_holds: int
+    usable_capacity: int
+    available: int
+    operational_status: str
+    freshness_status: str
+    status_source: str
+    last_verified_at: datetime | None = None
+    freshness_window_minutes: int
+    updated_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicResourceOut(BaseModel):
+    resource_type: str
+    usable_capacity: int
+    operational_status: str
+    freshness_status: str
+    last_verified_at: datetime | None = None
+    is_confirmed_fresh: bool = False
+    disclaimer: str = (
+        "Operational resource capacity reflects latest hospital attestation and may fluctuate. "
+        "Real-time allocation is confirmed only during emergency referral coordination."
+    )
 
 
 class ResourceStatusHistoryOut(BaseModel):

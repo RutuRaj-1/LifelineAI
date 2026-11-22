@@ -207,3 +207,48 @@ export interface HospitalRegistryResponse {
   items: HospitalProfile[];
   disclaimer: string;
 }
+
+export interface OperationalResource {
+  id: number;
+  hospital_id: number;
+  department_id?: number | null;
+  department_name?: string | null;
+  resource_type: string;
+  total: number;
+  physical_capacity: number;
+  staffed_capacity: number;
+  occupied_count: number;
+  maintenance_count: number;
+  active_reserved_holds: number;
+  usable_capacity: number;
+  available: number;
+  operational_status: "FUNCTIONAL" | "LIMITED" | "MAINTENANCE" | "NON_OPERATIONAL" | "UNSTAFFED" | "UNKNOWN" | string;
+  freshness_status: "FRESH" | "STALE" | "UNKNOWN" | "SUSPENDED";
+  status_source: string;
+  last_verified_at?: string | null;
+  freshness_window_minutes: number;
+  updated_at?: string | null;
+}
+
+export interface ResourceStatusHistory {
+  id: number;
+  hospital_resource_id: number;
+  previous_status?: string | null;
+  new_status: string;
+  previous_available_count?: number | null;
+  new_available_count: number;
+  verification_source: string;
+  verified_by_user_id?: number | null;
+  verified_at?: string | null;
+  remarks?: string | null;
+  created_at?: string | null;
+}
+
+export interface ResourceHistoryResponse {
+  resource_id: number;
+  resource_type: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: ResourceStatusHistory[];
+}

@@ -408,3 +408,41 @@ Prompt 05 implements the authoritative Hospital Registry, Department Hierarchy, 
 - **Alembic Migration Verification:** Full migration chain `001 -> 002 -> 003 -> 001 -> base -> head` verified in `backend/tests/test_migrations.py`.
 - **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 258.13 kB).
 - **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
+
+
+---
+
+## 14. Prompt 06 Implementation — Live Resource Availability, Operational Capacity, Attestation & Hospital Readiness Verification
+
+### 14.1 Objective & Architectural Scope
+Prompt 06 implements the operational resource availability, attestation, and reservation safety subsystem under the core principle: **"A vacant resource is not automatically a usable resource."**
+
+Key architectural implementations:
+- **Centralized Usable Capacity Formula (`backend/app/services/resource_service.py`):**
+  $$\text{usable\_capacity} = \max(0, \text{staffed\_capacity} - \text{occupied\_count} - \text{maintenance\_count} - \text{active\_reserved\_holds})$$
+  Enforces that if operational status is `MAINTENANCE`, `NON_OPERATIONAL`, `UNSTAFFED`, `CLOSED`, or `SUSPENDED`, usable capacity is deterministically clamped to 0 regardless of raw counts.
+- **Freshness Classification:**
+  Evaluates `last_verified_at` against institution-configured `freshness_window_minutes` to categorize resources into `FRESH`, `STALE`, `UNKNOWN`, and `SUSPENDED`.
+- **Operational Attestation & Audit Trail:**
+  Authorized hospital staff update staffed capacity, occupied units, maintenance counts, and operational status via `POST /api/hospital/resources/{id}/attest`. Every attestation synchronously records an immutable audit entry in `resource_status_history` capturing timestamps, user attribution, source (`MANUAL`, `SYSTEM_SYNC`), remarks, and changes in usable counts.
+- **Idempotent Reservation Lifecycles & Zero Double-Counting:**
+  - `HELD`: Temporary hold tied to an emergency referral request, expiring after an adjustable timeout window. Idempotency enforced via `idempotency_key`.
+  - `CONFIRMED`: Inbound transfer locked by admitting facility.
+  - `RELEASED` / `EXPIRED`: Hold terminated and capacity immediately returned to pool.
+  - `CONSUMED`: Upon patient arrival, hold status transitions to `CONSUMED` while `occupied_count` increments by reservation quantity. Net capacity shift is identically zero, completely avoiding double-counting occupancy.
+- **Legacy Column Projection:**
+  The legacy `available` column on `hospital_resources` is transactionally synchronized with derived usable capacity, ensuring backwards-compatibility for existing dispatch routing algorithms and client telemetry.
+- **WebSocket Broadcast (`RESOURCE_STATUS_UPDATED`):**
+  Spawns real-time broadcast of attestation updates and reservation transitions across the system event hub.
+- **Public Discovery Safe Projections (`GET /api/hospitals/{id}/resources`):**
+  Public-facing endpoint exposes operational status, usable capacity, and freshness flags without leaking internal reviewer notes, staff IDs, or confidential handover remarks.
+- **Frontend Operational Resources Workspace (`HospitalDashboard.tsx`):**
+  - Live resource summary cards highlighting Total Usable, Staffed Limit, Occupied, and Active Holds.
+  - Full operational table with freshness badges (`Fresh`, `Stale`, `Unknown`, `Suspended`), deduction breakdowns, and quick-action modals.
+  - Attestation Modal with real-time usable capacity calculation preview and operational feasibility validation.
+  - Comprehensive Audit History Modal detailing verified timestamps, attesting actors, sources, and shift turnover notes.
+
+### 14.2 Automated Verification Matrix
+- **Backend Tests:** **41/41 passed** (36 baseline + 5 new integration tests in `backend/tests/test_operational_resources.py` covering capacity formulas, freshness classification, staff attestation history, reservation lifecycle safety with zero double-counting, and cross-hospital RBAC isolation).
+- **Frontend Production Build:** `tsc -b && vite build` succeeded with 0 errors (production bundle: 270.77 kB in 1.27s).
+- **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
