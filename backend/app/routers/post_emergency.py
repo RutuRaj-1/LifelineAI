@@ -38,7 +38,7 @@ from ..schemas import (
     MedicationReconciliationOut,
     MedicationReconciliationVerifyIn,
 )
-from ..security import current_user, require_roles
+from ..security import current_user, require_clinical_authority, require_roles
 from ..services import post_emergency_service, storage
 
 router = APIRouter(prefix="/emergency", tags=["Post-Emergency Continuity"])
@@ -362,7 +362,7 @@ def approve_discharge_summary(
     case_id: int,
     summary_id: int,
     data: DischargeSummaryApproveIn,
-    user: User = Depends(require_roles("doctor", "admin")),
+    user: User = Depends(require_clinical_authority),
     db: Session = Depends(get_db),
 ):
     """Attending physician approval gate for discharge summary."""
@@ -375,7 +375,7 @@ def reject_discharge_summary(
     case_id: int,
     summary_id: int,
     data: DischargeSummaryRejectIn,
-    user: User = Depends(require_roles("doctor", "admin")),
+    user: User = Depends(require_clinical_authority),
     db: Session = Depends(get_db),
 ):
     """Attending physician rejection gate for discharge summary."""
@@ -430,7 +430,7 @@ def verify_medication_reconciliation(
     case_id: int,
     item_id: int,
     data: MedicationReconciliationVerifyIn,
-    user: User = Depends(require_roles("doctor", "admin")),
+    user: User = Depends(require_clinical_authority),
     db: Session = Depends(get_db),
 ):
     """Clinician verification gate for medication reconciliation entry."""

@@ -28,7 +28,7 @@ from ..schemas import (
     LocationIn,
     SOSInitiateIn,
 )
-from ..security import can_access_patient, current_user, require_roles
+from ..security import can_access_patient, current_user, require_clinical_authority, require_roles
 from ..services import emergency_service, handover_service, ops
 from ..services.runner import start_case
 from ..services.serialize import (
@@ -301,7 +301,7 @@ def approve_handover(
     case_id: int,
     handover_id: int,
     body: ClinicalHandoverApproveIn | None = None,
-    user: User = Depends(require_roles("doctor", "admin")),
+    user: User = Depends(require_clinical_authority),
     db: Session = Depends(get_db),
 ):
     """Authorized doctor approval gate for clinical handover."""
@@ -315,7 +315,7 @@ def reject_handover(
     case_id: int,
     handover_id: int,
     body: ClinicalHandoverRejectIn,
-    user: User = Depends(require_roles("doctor", "admin")),
+    user: User = Depends(require_clinical_authority),
     db: Session = Depends(get_db),
 ):
     """Authorized doctor rejection with clinical rationale."""

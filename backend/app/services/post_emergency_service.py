@@ -376,10 +376,10 @@ def approve_discharge_summary(
     if not case:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Emergency case not found.")
 
-    if doctor_user.role not in ("doctor", "admin"):
+    if doctor_user.role != "doctor":
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Access denied: Only licensed physicians may clinically approve discharge summaries.",
+            "Access denied: Clinical authority required. Only licensed physicians may clinically approve discharge summaries.",
         )
 
     summary = db.get(DischargeSummary, summary_id)
@@ -480,8 +480,11 @@ def reject_discharge_summary(
     if not case:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Emergency case not found.")
 
-    if doctor_user.role not in ("doctor", "admin"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied: Only physicians may reject discharge summaries.")
+    if doctor_user.role != "doctor":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Access denied: Clinical authority required. Only licensed physicians may reject discharge summaries.",
+        )
 
     summary = db.get(DischargeSummary, summary_id)
     if not summary or summary.emergency_case_id != case.id:
@@ -599,8 +602,11 @@ def verify_medication_reconciliation_entry(
     if not case:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Emergency case not found.")
 
-    if doctor_user.role not in ("doctor", "admin"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied: Only clinicians can verify medication reconciliation.")
+    if doctor_user.role != "doctor":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Access denied: Clinical authority required. Only licensed clinicians may verify medication reconciliation entries.",
+        )
 
     entry = db.get(MedicationReconciliation, entry_id)
     if not entry or entry.emergency_case_id != case.id:

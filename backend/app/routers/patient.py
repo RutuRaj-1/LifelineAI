@@ -359,7 +359,7 @@ def get_health_timeline(
         db.query(MedicationReconciliation)
         .filter(
             MedicationReconciliation.patient_id == p.id,
-            MedicationReconciliation.verification_status == "CLINICIAN_VERIFIED",
+            MedicationReconciliation.verification_status.in_(["VERIFIED", "CLINICIAN_VERIFIED"]),
         )
         .all()
     )

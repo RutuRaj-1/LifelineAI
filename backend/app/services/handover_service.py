@@ -289,10 +289,10 @@ def approve_clinical_handover(
     if not handover:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Clinical handover not found.")
 
-    if doctor_user.role not in ("doctor", "admin"):
+    if doctor_user.role != "doctor":
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Access denied: Only authorized physicians or emergency coordinators can approve clinical handovers.",
+            "Access denied: Clinical authority required. Only qualified physicians can approve clinical handovers.",
         )
 
     if handover.status not in ("PENDING_REVIEW", "DRAFT"):

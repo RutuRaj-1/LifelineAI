@@ -59,6 +59,18 @@ def require_roles(*roles: str):
     return dep
 
 
+def require_clinical_authority(user: User = Depends(current_user), db: Session = Depends(get_db)) -> User:
+    """Enforces clinical authority: user must be a registered, licensed physician/doctor.
+    Administrative accounts (admin) cannot perform clinical approvals, medical verifications,
+    or clinical discharge summary sign-offs without clinical licensing."""
+    if user.role != "doctor":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Clinical authority required: Only qualified treating physicians can perform clinical approvals and medication verifications.",
+        )
+    return user
+
+
 def doctor_of(db: Session, user: User) -> Doctor | None:
     return db.query(Doctor).filter(Doctor.user_id == user.id).first() if user.role == "doctor" else None
 

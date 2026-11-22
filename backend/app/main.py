@@ -55,6 +55,7 @@ app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.co
 
 
 @app.get("/health", tags=["System"])
+@app.get("/api/health", tags=["System"])
 def health():
     db_ok = check_db_health()
     return {
