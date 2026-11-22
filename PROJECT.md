@@ -541,3 +541,48 @@ Prompt 07 implements the multi-hospital referral engine and explicit acceptance 
 - **Alembic Migration Verification:** Full migration chain `001 -> 002 -> 003 -> 004 -> 005 -> 001 -> base -> head` verified in `backend/tests/test_migrations.py`.
 - **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 289.86 kB in 1.38s).
 - **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
+
+---
+
+## 17. Prompt 09 Implementation — Frontend Platform Integration, Real-Time Dashboard Synchronization, Emergency Monitoring & Workflow UX Stabilization
+
+### 17.1 Architecture & Component Integration
+- **Centralized WebSocket Singleton & Reactive Connection Tracking (`frontend/src/lib/ws.ts`):**
+  - Refactored WebSocket connectivity into a robust singleton `WebSocketManager` with subscriber registry, preventing duplicate socket connections when multiple dashboards are mounted.
+  - Implemented automatic exponential backoff reconnection with jitter (1s up to 10s max retry).
+  - Reactive connection status hooks: `useWsConnectionStatus()` delivering `"CONNECTED" | "RECONNECTING" | "DISCONNECTED"`.
+  - Global `ConnectionStatusBadge` in `Navbar.tsx` displaying animated live status (`LIVE`, `SYNCING`, `OFFLINE`).
+- **Standardized UI Badges & Status Separation Invariant (`frontend/src/components/StatusBadges.tsx`):**
+  - Strict semantic separation between 3 distinct state machines:
+    1. **Emergency Case Status:** `EmergencyStatusBadge` supporting canonical 10-state lifecycle (`CREATED`, `INITIATED`, `INTAKE_IN_PROGRESS`, `COORDINATION_ACTIVE`, `REFERRAL_IN_PROGRESS`, `ACCEPTED`, `IN_TRANSIT`, `ARRIVED`, `HANDOVER_COMPLETED`, `COMPLETED`).
+    2. **Referral Request Status:** `ReferralStatusBadge` (`DRAFT`, `SENT`, `REVIEWING`, `CLARIFICATION_REQUIRED`, `ACCEPTED`, `DECLINED`, `EXPIRED`, `CANCELLED`).
+    3. **Clinical Handover Status:** `HandoverStatusBadge` (`PENDING_REVIEW`, `APPROVED`, `SUPERSEDED`, `REJECTED`).
+    4. **Operational Resource Freshness:** `FreshnessBadge` (`FRESH`, `STALE`, `UNKNOWN`, `SUSPENDED`).
+    5. **Data Provenance:** `ProvenanceBadge` (`DOCTOR_VERIFIED`, `OCR_EXTRACTED`, `PATIENT_ENTERED`).
+- **Milestone Stepper (`frontend/src/components/StatusStepper.tsx`):**
+  - Updated to reflect the complete 8 canonical lifecycle milestones (Intake -> Coordination -> Referral Dispatch -> Hospital Accepted -> In Transit -> Arrived -> Handover -> Completed) while maintaining backward compatibility with legacy statuses.
+
+### 17.2 Role-Specific Workspaces
+- **Doctor / Attending Coordinator Workspace (`frontend/src/pages/DoctorDashboard.tsx`):**
+  - Queue overview with emergency type, priority, and lifecycle state.
+  - Live Incident Feed: displays chronological witness and paramedic reports; allows attending clinician to post clinical observations (`emergencyOrchApi.submitIncident`).
+  - Evidence-Grounded Clinical Handover Workspace: trigger handover generation, review synthesized structured records (demographics, vital signs, chronic conditions, critical allergies highlighted in alert styling, active prescriptions, past surgeries, missing data warnings, and mandatory non-diagnostic disclaimer).
+  - Human Physician Approval Gate: Doctor can approve handover with clinical notes or reject with mandatory justification.
+  - Multi-Hospital Referral Dispatch: evaluates nearby eligible hospitals with verified clinical capabilities and live resource capacity/freshness, broadcasts requests with idempotency keys, tracks real-time hospital responses, and handles clarification roundtrips.
+- **Patient Workspace (`frontend/src/pages/PatientHome.tsx`):**
+  - Standardized SOS Station using `emergencyOrchApi.triggerSos` with browser geolocation, accuracy radius, origin type `PATIENT_APP`, and client-generated idempotency key.
+  - Active Emergency View: complete lifecycle progress stepper, confirmed destination hospital details (address, phone, attending specialist), live symptom update submission form for ongoing patient reporting, and evidence-grounded non-diagnostic summary banner.
+- **Family Portal (`frontend/src/pages/FamilyPortal.tsx`):**
+  - Family-Assisted SOS Station: allows family members to initiate emergency SOS on behalf of an incapacitated relative (`origin_type="FAMILY_DELEGATE"`).
+  - Active Emergency Tracking: privacy-redacted lifecycle stepper (protecting clinical confidentiality: no raw clinician diagnostic notes or private internal chats).
+  - Real-time transit ETA and confirmed receiving hospital details.
+  - Bystander / Family update submission form (`reporter_type="FAMILY_WITNESS"`).
+- **Hospital Command Center (`frontend/src/pages/HospitalDashboard.tsx`):**
+  - Emergency Queue: Patient Arrival confirmation button (`emergencyOrchApi.recordArrival`), which idempotently consumes reserved resource holds and transitions status to `ARRIVED`.
+  - Clinical Handover Inspection & Acknowledgement: hospital staff reviews the physician-approved handover brief and confirms reception with operational remarks (`emergencyOrchApi.acknowledgeHandover`), moving status to `HANDOVER_COMPLETED`.
+  - Incoming Referrals: explicit review (`POST .../review`), acceptance with atomic resource reservation, decline with reason codes, and clarification roundtrip.
+
+### 17.3 Automated Verification Matrix
+- **Backend Tests:** **56/56 passed** (all domain, security, config, db lifecycle, hospital registry, operational resources, patient intelligence, referral engine, and emergency orchestration tests passing).
+- **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 332.49 kB in 1.30s).
+- **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.

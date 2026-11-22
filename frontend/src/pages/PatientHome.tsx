@@ -5,8 +5,10 @@ import {
   CaseDetail,
   ClinicalFact,
   EmergencyType,
+  emergencyOrchApi,
   HealthTimelineEvent,
   HealthVaultOverview,
+  IncidentReportItem,
   PatientProfile,
   ReportSummary,
   TimelineEntry,
@@ -826,16 +828,26 @@ function SosPanel({ onCreated }: { onCreated: () => void }) {
   function trigger() {
     setBusy(true);
     setError(null);
-    const done = (lat: number, lng: number) =>
-      api.post("/emergency", { lat, lng, emergency_type: type, symptoms: symptoms || undefined })
+    const done = (lat: number, lng: number, accuracy?: number) =>
+      emergencyOrchApi
+        .triggerSos({
+          emergency_type: type,
+          symptoms: symptoms.trim() || undefined,
+          lat,
+          lng,
+          origin_type: "PATIENT_APP",
+          location_source: "BROWSER_GEOLOCATION",
+          location_accuracy_meters: accuracy,
+          idempotency_key: crypto.randomUUID(),
+        })
         .then(onCreated)
         .catch((e) => setError(e instanceof ApiError ? e.message : "Could not trigger SOS"))
         .finally(() => setBusy(false));
 
-    if (!navigator.geolocation) return done(18.5204, 73.8567); // Pune fallback
+    if (!navigator.geolocation) return done(18.5204, 73.8567, 100); // Pune fallback
     navigator.geolocation.getCurrentPosition(
-      (pos) => done(pos.coords.latitude, pos.coords.longitude),
-      () => done(18.5204, 73.8567),
+      (pos) => done(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+      () => done(18.5204, 73.8567, 100),
       { timeout: 4000 }
     );
   }
@@ -883,12 +895,40 @@ function SosPanel({ onCreated }: { onCreated: () => void }) {
 // --- Active Emergency View ---
 function ActiveEmergency({ c, onChange }: { c: CaseDetail; onChange: () => void }) {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [incidents, setIncidents] = useState<IncidentReportItem[]>([]);
+  const [updateText, setUpdateText] = useState("");
+  const [submittingUpdate, setSubmittingUpdate] = useState(false);
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     api.get<TimelineEntry[]>(`/emergency/${c.id}/timeline`)
       .then(setTimeline)
       .catch(() => {});
-  }, [c.id, c.updated_at]);
+    emergencyOrchApi.getIncidents(c.id)
+      .then(setIncidents)
+      .catch(() => {});
+  }, [c.id]);
+
+  useEffect(loadData, [loadData, c.updated_at]);
+
+  async function handleSendUpdate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!updateText.trim()) return;
+    setSubmittingUpdate(true);
+    try {
+      await emergencyOrchApi.submitIncident(c.id, {
+        reported_text: updateText.trim(),
+        reporter_type: "PATIENT_WITNESS",
+        report_type: "SYMPTOM_UPDATE",
+        idempotency_key: crypto.randomUUID(),
+      });
+      setUpdateText("");
+      loadData();
+    } catch {
+      // ignore
+    } finally {
+      setSubmittingUpdate(false);
+    }
+  }
 
   const prio = priorityLabel(c.priority);
 
@@ -909,11 +949,15 @@ function ActiveEmergency({ c, onChange }: { c: CaseDetail; onChange: () => void 
       <div className="grid gap-5 sm:grid-cols-2">
         <EtaCard c={c} />
         <div className="card p-5">
-          <h3 className="font-display text-base font-semibold text-navy-900">Hospital Coordination</h3>
+          <h3 className="font-display text-base font-semibold text-navy-900">Hospital Destination</h3>
           {c.hospital ? (
             <div className="mt-2 text-sm text-navy-900/80">
-              <p className="font-bold text-navy-900">{c.hospital.name}</p>
+              <span className="pill bg-emerald-100 text-emerald-800 text-[11px] font-bold mb-1">
+                ✓ Confirmed Receiving Facility
+              </span>
+              <p className="font-bold text-navy-900 mt-1">{c.hospital.name}</p>
               <p>{c.hospital.address}</p>
+              {c.hospital.phone && <p className="text-xs text-navy-900/50 mt-1">Phone: {c.hospital.phone}</p>}
               {c.doctor && (
                 <p className="mt-2">
                   Attending Specialist: <span className="font-medium text-navy-900">{c.doctor.name}</span> ({c.doctor.specialty})
@@ -921,9 +965,50 @@ function ActiveEmergency({ c, onChange }: { c: CaseDetail; onChange: () => void 
               )}
             </div>
           ) : (
-            <p className="mt-2 text-sm text-navy-900/50">Routing to nearest available facility…</p>
+            <p className="mt-2 text-sm text-navy-900/50">
+              Referral broadcast in progress. Coordinating with nearby facilities for immediate bed & capability reservation…
+            </p>
           )}
         </div>
+      </div>
+
+      {/* Real-time incident updates panel */}
+      <div className="card p-5 space-y-3">
+        <h3 className="font-display text-base font-semibold text-navy-900">
+          Live Symptom & Status Updates
+        </h3>
+        <p className="text-xs text-navy-900/60">
+          Submit updates on patient condition, changes in consciousness, or ambulance arrival.
+        </p>
+        <form onSubmit={handleSendUpdate} className="flex gap-2">
+          <input
+            className="input text-xs"
+            placeholder="e.g. Paramedics have arrived / patient is resting"
+            value={updateText}
+            onChange={(e) => setUpdateText(e.target.value)}
+          />
+          <button
+            type="submit"
+            disabled={submittingUpdate || !updateText.trim()}
+            className="btn-primary text-xs shrink-0"
+          >
+            {submittingUpdate ? "Posting…" : "Send Update"}
+          </button>
+        </form>
+
+        {incidents.length > 0 && (
+          <div className="mt-3 space-y-2 max-h-48 overflow-y-auto pt-2 border-t border-navy-900/10">
+            {incidents.map((inc) => (
+              <div key={inc.id} className="rounded bg-navy-900/[0.03] p-2.5 text-xs">
+                <div className="flex justify-between text-[10px] text-navy-900/50 mb-0.5">
+                  <span className="font-semibold uppercase">{inc.reporter_type.replace(/_/g, " ")}</span>
+                  <span>{timeAgo(inc.received_at)}</span>
+                </div>
+                <p className="text-navy-900">{inc.reported_text}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <SummaryCard s={c.ai_summary} />

@@ -40,8 +40,24 @@ export const api = {
 
 export type Role = "patient" | "doctor" | "hospital" | "family";
 export type EmergencyType = "stroke" | "cardiac" | "trauma" | "diabetic" | "accident" | "other";
-export type CaseStatus = "CREATED" | "PATIENT_IDENTIFIED" | "SUMMARY_GENERATED" | "DOCTOR_ASSIGNED" |
-  "ROOM_RESERVED" | "PATIENT_ARRIVED" | "COMPLETED";
+export type CaseStatus =
+  | "CREATED"
+  | "INITIATED"
+  | "INTAKE_IN_PROGRESS"
+  | "COORDINATION_ACTIVE"
+  | "REFERRAL_IN_PROGRESS"
+  | "ACCEPTED"
+  | "IN_TRANSIT"
+  | "ARRIVED"
+  | "HANDOVER_COMPLETED"
+  | "COMPLETED"
+  | "CLOSED"
+  | "PATIENT_IDENTIFIED"
+  | "SUMMARY_GENERATED"
+  | "DOCTOR_ASSIGNED"
+  | "ROOM_RESERVED"
+  | "PATIENT_ARRIVED"
+  | string;
 
 export interface Me { id: number; email: string; full_name: string; role: Role; patient_id: number | null; doctor_id: number | null; hospital_id: number | null; }
 

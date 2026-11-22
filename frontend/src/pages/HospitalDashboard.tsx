@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   api,
   CaseDetail,
+  ClinicalHandoverItem,
   DoctorSummary,
   emergencyOrchApi,
   HospitalCapability,
@@ -17,6 +18,12 @@ import {
 import { useEmergencyEvents } from "../lib/ws";
 import { TYPE_LABEL, priorityLabel, timeAgo } from "../lib/format";
 import StatusStepper from "../components/StatusStepper";
+import {
+  EmergencyStatusBadge,
+  ReferralStatusBadge,
+  HandoverStatusBadge,
+  FreshnessBadge,
+} from "../components/StatusBadges";
 
 interface Resource {
   resource_type: string;
@@ -78,6 +85,12 @@ export default function HospitalDashboard() {
   const [historyModalResource, setHistoryModalResource] = useState<OperationalResource | null>(null);
   const [historyData, setHistoryData] = useState<ResourceStatusHistory[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Handover review & acknowledgement state
+  const [viewHandoverCaseId, setViewHandoverCaseId] = useState<number | null>(null);
+  const [handoverDetail, setHandoverDetail] = useState<ClinicalHandoverItem | null>(null);
+  const [handoverAckRemarks, setHandoverAckRemarks] = useState<string>("");
+  const [acknowledging, setAcknowledging] = useState<boolean>(false);
 
   // Department creation form state
   const [deptForm, setDeptForm] = useState({
@@ -579,30 +592,68 @@ export default function HospitalDashboard() {
                   </div>
                 )}
 
-                {!selected.doctor && (
-                  <div>
-                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-navy-900/50">Assign a doctor</p>
-                    <div className="flex flex-wrap gap-2">
-                      {doctors.filter((d) => d.is_available).map((d) => (
-                        <button key={d.id} onClick={() => assign(d.id)} className="btn-secondary text-xs">
-                          {d.name} · {d.specialty}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* Arrival Confirmation & Handover Acknowledgment Actions */}
+                <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-navy-900/10">
+                  {(selected.status === "ACCEPTED" || selected.status === "IN_TRANSIT" || selected.status === "ROOM_RESERVED") && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await emergencyOrchApi.recordArrival(selected.id, "Patient arrived at hospital emergency triage.");
+                          refreshQueue();
+                          loadOperationalResources();
+                          setRegistryMessage(`Arrival confirmed for Case #${selected.id}. Resource reservation consumed.`);
+                        } catch (err: any) {
+                          alert(err.message || "Failed to confirm arrival");
+                        }
+                      }}
+                      className="rounded-lg bg-teal-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
+                    >
+                      🏥 Confirm Patient Arrival
+                    </button>
+                  )}
 
-                {selected.status !== "COMPLETED" && (
-                  <button
-                    className="btn-secondary"
-                    onClick={async () => {
-                      await api.post(`/emergency/${selected.id}/complete`);
-                      refreshQueue();
-                    }}
-                  >
-                    Mark case complete
-                  </button>
-                )}
+                  {(selected.status === "ARRIVED" || selected.status === "PATIENT_ARRIVED" || selected.status === "ACCEPTED" || selected.status === "IN_TRANSIT") && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const h = await emergencyOrchApi.getHandover(selected.id);
+                          setHandoverDetail(h);
+                          setViewHandoverCaseId(selected.id);
+                        } catch {
+                          alert("No approved clinical handover found for this case yet.");
+                        }
+                      }}
+                      className="rounded-lg bg-navy-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-navy-800 shadow-sm"
+                    >
+                      📋 View & Acknowledge Handover
+                    </button>
+                  )}
+
+                  {!selected.doctor && (
+                    <div className="w-full mt-2">
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-navy-900/50">Assign a doctor</p>
+                      <div className="flex flex-wrap gap-2">
+                        {doctors.filter((d) => d.is_available).map((d) => (
+                          <button key={d.id} onClick={() => assign(d.id)} className="btn-secondary text-xs">
+                            {d.name} · {d.specialty}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selected.status !== "COMPLETED" && (
+                    <button
+                      className="btn-secondary text-xs mt-2"
+                      onClick={async () => {
+                        await api.post(`/emergency/${selected.id}/complete`);
+                        refreshQueue();
+                      }}
+                    >
+                      Mark case complete
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1788,13 +1839,155 @@ export default function HospitalDashboard() {
               </div>
             </div>
 
-            <div className="flex justify-end pt-3 border-t border-navy-900/10">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-navy-900/10">
+              {selectedReferral.status === "ACCEPTED" && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const h = await emergencyOrchApi.getHandover(selectedReferral.emergency_case_id);
+                      setHandoverDetail(h);
+                      setViewHandoverCaseId(selectedReferral.emergency_case_id);
+                    } catch {
+                      alert("No approved clinical handover brief found for this case.");
+                    }
+                  }}
+                  className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
+                >
+                  📋 Review & Acknowledge Clinical Handover
+                </button>
+              )}
               <button
                 onClick={() => setSelectedReferral(null)}
-                className="btn-secondary text-xs"
+                className="btn-secondary text-xs ml-auto"
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Hospital Clinical Handover Inspection & Acknowledgement Modal */}
+      {viewHandoverCaseId && handoverDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/40 p-4 backdrop-blur-sm">
+          <div className="card w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-navy-900/10 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display text-lg font-bold text-navy-900">
+                    Clinical Handover Brief (v{handoverDetail.version})
+                  </h3>
+                  <HandoverStatusBadge status={handoverDetail.status} />
+                </div>
+                <p className="text-xs text-navy-900/60 mt-0.5">
+                  Emergency Case #{viewHandoverCaseId} · Created {timeAgo(handoverDetail.created_at)}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setViewHandoverCaseId(null);
+                  setHandoverDetail(null);
+                  setHandoverAckRemarks("");
+                }}
+                className="rounded p-1 text-navy-900/50 hover:bg-navy-900/5"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Disclaimer */}
+            <div className="rounded-lg bg-navy-900/5 p-3 text-xs text-navy-900/80 border border-navy-900/10">
+              <strong>Clinical Handover Document:</strong> Grounded non-diagnostic factual record transmitted to attending receiving team.
+            </div>
+
+            {/* Structured Handover Data */}
+            <div className="space-y-3 text-xs">
+              <div className="rounded-lg bg-rose-50 p-3.5 border border-rose-200">
+                <h4 className="font-bold text-rose-900 uppercase text-[11px] mb-1">Critical Allergies</h4>
+                <ul className="space-y-0.5">
+                  {handoverDetail.handover_data?.known_allergies?.map((a: any, idx: number) => (
+                    <li key={idx} className="font-semibold text-rose-800">⚠️ {typeof a === "string" ? a : a.fact_value || a.value}</li>
+                  ))}
+                  {(!handoverDetail.handover_data?.known_allergies || !handoverDetail.handover_data.known_allergies.length) && (
+                    <li className="text-navy-900/50">No verified drug allergies on record</li>
+                  )}
+                </ul>
+              </div>
+
+              <div className="rounded-lg bg-navy-900/[0.03] p-3.5 space-y-2">
+                <div>
+                  <span className="font-bold text-navy-900 uppercase text-[11px] block">Recorded Chronic Conditions</span>
+                  <p className="mt-0.5 text-navy-900/80">
+                    {handoverDetail.handover_data?.known_conditions?.map((c: any) => typeof c === "string" ? c : c.fact_value || c.value).join(", ") || "None"}
+                  </p>
+                </div>
+                <div>
+                  <span className="font-bold text-navy-900 uppercase text-[11px] block">Active Prescriptions</span>
+                  <p className="mt-0.5 text-navy-900/80">
+                    {handoverDetail.handover_data?.current_medications?.map((m: any) => typeof m === "string" ? m : m.fact_value || m.value).join(", ") || "None"}
+                  </p>
+                </div>
+              </div>
+
+              {handoverDetail.approved_by_name && (
+                <div className="rounded bg-teal-50 p-2.5 text-teal-900 border border-teal-200">
+                  <span className="font-bold">Attending Doctor Approval:</span> Approved by {handoverDetail.approved_by_name} ({timeAgo(handoverDetail.approved_at)})
+                  {handoverDetail.approval_notes && <p className="mt-0.5 italic">"{handoverDetail.approval_notes}"</p>}
+                </div>
+              )}
+            </div>
+
+            {/* Operational Acknowledgement Form */}
+            <div className="rounded-lg bg-navy-900/[0.02] p-4 border border-navy-900/10 space-y-3">
+              <h4 className="font-bold text-navy-900 text-xs uppercase tracking-wider">
+                Hospital Reception Acknowledgement
+              </h4>
+              <p className="text-xs text-navy-900/60">
+                Confirm clinical handover reception by entering operational remarks (e.g. Bed assignment, receiving trauma lead).
+              </p>
+              <input
+                className="input text-xs w-full"
+                placeholder="Operational remarks (e.g. Admitted to ICU Bay 2, handover verified)"
+                value={handoverAckRemarks}
+                onChange={(e) => setHandoverAckRemarks(e.target.value)}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setViewHandoverCaseId(null);
+                    setHandoverDetail(null);
+                  }}
+                  className="btn-secondary text-xs"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={async () => {
+                    setAcknowledging(true);
+                    try {
+                      await emergencyOrchApi.acknowledgeHandover(
+                        viewHandoverCaseId,
+                        handoverDetail.id,
+                        handoverAckRemarks.trim() || undefined
+                      );
+                      setViewHandoverCaseId(null);
+                      setHandoverDetail(null);
+                      setHandoverAckRemarks("");
+                      refreshQueue();
+                      loadIncomingReferrals();
+                      setRegistryMessage(`Handover successfully acknowledged for Case #${viewHandoverCaseId}.`);
+                    } catch (err: any) {
+                      alert(err.message || "Failed to acknowledge handover");
+                    } finally {
+                      setAcknowledging(false);
+                    }
+                  }}
+                  disabled={acknowledging}
+                  className="btn-primary text-xs"
+                >
+                  {acknowledging ? "Acknowledging…" : "✓ Confirm Handover Acknowledged"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
