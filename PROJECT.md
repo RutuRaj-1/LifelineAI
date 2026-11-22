@@ -359,3 +359,27 @@ Rather than creating a redundant `HistoricalIncident` table that would duplicate
 - **Total Backend Tests:** **26/26 passed** in 12.89s (17 baseline + 9 new domain & referral integrity tests).
 - **Alembic Migrations:** Full chain `001 -> 002 -> 001 -> base -> head` tested on isolated temporary database.
 - **Frontend Build:** `tsc -b && vite build` succeeded in 1.20s with zero regressions.
+
+---
+
+## 12. Prompt 04 Implementation — Patient Intelligence, Health Vault & Longitudinal Timeline
+
+### 12.1 Objective & Architectural Scope
+Prompt 04 establishes the Pre-Emergency Patient Intelligence layer, transforming static profiles into an active, verifiable, longitudinal clinical record repository:
+- **Patient Health Vault Overview (`GET /api/patient/health-vault`):** Aggregate metrics, conditions, allergies, active medications, surgery counts, report status, verification summary, and non-diagnostic organizational summary.
+- **Structured Clinical Facts (`/api/patient/clinical-facts`):** Full CRUD for clinical facts (`CONDITION`, `ALLERGY`, `MEDICATION`, `SURGERY`, `DEVICE`, `RISK`, `OTHER`), filtering by `fact_type` and `clinical_status`.
+- **Data Provenance System (`ClinicalProvenance`):** Patient self-entered facts automatically receive immutable `PATIENT_ENTERED` provenance with `verification_status="UNVERIFIED"`. Fact edits and deactivations append audit trail records without destroying historical evidence.
+- **Longitudinal Health Timeline (`GET /api/patient/health-timeline`):** Chronological, multi-source event stream combining medical reports (`event_date` prioritized over upload timestamp), clinical facts, and historical emergency visits with provenance tags and pagination.
+- **Strict Privacy & Role-Based Access Isolation:** Endpoints enforce strict patient-level isolation (patients can only view/edit their own facts, reports, and timeline; unauthorized cross-patient attempts return 404). Family portal redactions remain strictly enforced.
+- **Frontend Patient Intelligence Workspace (`PatientHome.tsx`):** Upgraded patient portal with dedicated tabbed interface:
+  1. *Health Vault*: Metrics cards, factual clinical summary, and provenance indicators.
+  2. *Clinical Facts*: Category filters, verification badges, inline fact entry, and soft-deactivation.
+  3. *Health Timeline*: Chronological event stream with provenance sources.
+  4. *Medical Reports*: Document upload, OCR status badges, and full extracted text inspection.
+  5. *Profile & Consent*: Contact details, emergency contacts, and AI consent toggles.
+  6. *SOS Station*: Instant emergency initiation and active hospital coordination tracker.
+
+### 12.2 Automated Verification Matrix
+- **Backend Tests:** **31/31 passed** (26 previous + 5 new integration tests in `backend/tests/test_patient_intelligence.py` covering health vault aggregation, clinical facts lifecycle, provenance immutability, longitudinal timeline, and cross-patient isolation).
+- **Frontend Build:** `tsc -b && vite build` succeeded with 0 errors (production bundle: 238.76 kB).
+- **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.

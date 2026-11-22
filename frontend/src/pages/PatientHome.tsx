@@ -1,5 +1,16 @@
 import { useEffect, useState, useCallback } from "react";
-import { api, ApiError, CaseDetail, EmergencyType, PatientProfile, ReportSummary, TimelineEntry } from "../lib/api";
+import {
+  api,
+  ApiError,
+  CaseDetail,
+  ClinicalFact,
+  EmergencyType,
+  HealthTimelineEvent,
+  HealthVaultOverview,
+  PatientProfile,
+  ReportSummary,
+  TimelineEntry,
+} from "../lib/api";
 import { useEmergencyEvents } from "../lib/ws";
 import { TYPE_LABEL, priorityLabel, timeAgo } from "../lib/format";
 import StatusStepper from "../components/StatusStepper";
@@ -8,40 +19,804 @@ import SummaryCard from "../components/SummaryCard";
 import ChecklistCard from "../components/ChecklistCard";
 import Banner from "../components/Banner";
 
-type Tab = "sos" | "profile" | "reports";
+type Tab = "sos" | "vault" | "facts" | "timeline" | "reports" | "profile";
 const TYPES: EmergencyType[] = ["stroke", "cardiac", "trauma", "diabetic", "accident", "other"];
 
 export default function PatientHome() {
-  const [tab, setTab] = useState<Tab>("sos");
+  const [tab, setTab] = useState<Tab>("vault");
   const [active, setActive] = useState<CaseDetail | null | undefined>(undefined);
 
   const refresh = useCallback(() => {
-    api.get<CaseDetail | null>("/emergency/active").then(setActive).catch(() => setActive(null));
+    api.get<CaseDetail | null>("/emergency/active")
+      .then(setActive)
+      .catch(() => setActive(null));
   }, []);
+
   useEffect(refresh, [refresh]);
   useEmergencyEvents(() => refresh());
 
   return (
-    <div className="mx-auto max-w-4xl px-5 py-8">
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       {active ? (
         <ActiveEmergency c={active} onChange={refresh} />
       ) : (
         <>
-          <nav className="mb-6 flex gap-2">
-            {(["sos", "profile", "reports"] as Tab[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`btn ${tab === t ? "btn-primary" : "btn-secondary"} capitalize`}>{t}</button>
+          {/* Header navigation bar */}
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-navy-900/10 pb-4">
+            <div>
+              <h1 className="font-display text-2xl font-bold tracking-tight text-navy-900">
+                Patient Intelligence Workspace
+              </h1>
+              <p className="text-xs text-navy-900/60">
+                Move Information Before the Patient, Not After · Pre-Emergency Readiness
+              </p>
+            </div>
+            <button
+              onClick={() => setTab("sos")}
+              className="btn-danger flex items-center gap-1.5 px-4 py-2 font-semibold shadow-sm"
+            >
+              <span>🆘</span> Trigger SOS
+            </button>
+          </div>
+
+          <nav className="mb-6 flex flex-wrap gap-2">
+            {[
+              { id: "vault", label: "Health Vault" },
+              { id: "facts", label: "Clinical Facts" },
+              { id: "timeline", label: "Health Timeline" },
+              { id: "reports", label: "Medical Reports" },
+              { id: "profile", label: "Profile & Consent" },
+              { id: "sos", label: "SOS Station" },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id as Tab)}
+                className={`btn text-xs font-semibold sm:text-sm ${
+                  tab === t.id ? "btn-primary" : "btn-secondary"
+                }`}
+              >
+                {t.label}
+              </button>
             ))}
           </nav>
-          {tab === "sos" && <SosPanel onCreated={refresh} />}
-          {tab === "profile" && <ProfilePanel />}
+
+          {tab === "vault" && <HealthVaultPanel onNavigate={(t) => setTab(t)} />}
+          {tab === "facts" && <ClinicalFactsPanel />}
+          {tab === "timeline" && <HealthTimelinePanel />}
           {tab === "reports" && <ReportsPanel />}
+          {tab === "profile" && <ProfilePanel />}
+          {tab === "sos" && <SosPanel onCreated={refresh} />}
         </>
       )}
     </div>
   );
 }
 
+// --- Tab 1: Health Vault Overview ---
+function HealthVaultPanel({ onNavigate }: { onNavigate: (t: Tab) => void }) {
+  const [data, setData] = useState<HealthVaultOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<HealthVaultOverview>("/patient/health-vault")
+      .then(setData)
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load health vault"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="card p-8 text-center text-sm text-navy-900/50">Loading Health Vault…</div>;
+  if (error) return <Banner>{error}</Banner>;
+  if (!data) return null;
+
+  return (
+    <div className="space-y-6">
+      {/* Metric Cards Grid */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="card p-4">
+          <p className="text-xs font-medium text-navy-900/60 uppercase tracking-wider">Reports Uploaded</p>
+          <p className="mt-1 font-display text-2xl font-bold text-teal-700">{data.total_reports}</p>
+          <button onClick={() => onNavigate("reports")} className="mt-2 text-xs font-medium text-teal-600 hover:underline">
+            View documents →
+          </button>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs font-medium text-navy-900/60 uppercase tracking-wider">Active Conditions</p>
+          <p className="mt-1 font-display text-2xl font-bold text-navy-900">{data.conditions_count}</p>
+          <button onClick={() => onNavigate("facts")} className="mt-2 text-xs font-medium text-teal-600 hover:underline">
+            View conditions →
+          </button>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs font-medium text-navy-900/60 uppercase tracking-wider">Known Allergies</p>
+          <p className="mt-1 font-display text-2xl font-bold text-coral-600">{data.allergies_count}</p>
+          <button onClick={() => onNavigate("facts")} className="mt-2 text-xs font-medium text-teal-600 hover:underline">
+            Safety flags →
+          </button>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs font-medium text-navy-900/60 uppercase tracking-wider">Active Medications</p>
+          <p className="mt-1 font-display text-2xl font-bold text-navy-900">{data.medications_count}</p>
+          <button onClick={() => onNavigate("facts")} className="mt-2 text-xs font-medium text-teal-600 hover:underline">
+            View prescriptions →
+          </button>
+        </div>
+      </div>
+
+      {/* Verification & Data Provenance Status */}
+      <div className="card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-navy-900/10 pb-3">
+          <h2 className="font-display text-base font-semibold text-navy-900">
+            Data Provenance & Clinical Verification
+          </h2>
+          <div className="flex items-center gap-2">
+            <span className="pill bg-teal-50 text-teal-700 border border-teal-200">
+              Verified: {data.verification_summary["VERIFIED"] || 0}
+            </span>
+            <span className="pill bg-blue-50 text-blue-700 border border-blue-200">
+              Reviewed: {data.verification_summary["REVIEWED"] || 0}
+            </span>
+            <span className="pill bg-amber-50 text-amber-700 border border-amber-200">
+              Unverified: {data.verification_summary["UNVERIFIED"] || 0}
+            </span>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-navy-900/70 leading-relaxed">
+          Every clinical fact in your LifeLine AI Vault retains an audit trail linking it to its source
+          (patient registration, uploaded OCR medical report, or attending physician validation).
+          OCR-extracted data is maintained separately from doctor-verified records to prevent clinical errors.
+        </p>
+      </div>
+
+      {/* Non-Diagnostic Grounded Factual Summary */}
+      <div className="card p-6 bg-gradient-to-br from-white to-navy-50/50">
+        <div className="flex items-center justify-between border-b border-navy-900/10 pb-3">
+          <div>
+            <h3 className="font-display text-base font-semibold text-navy-900">
+              Structured Health Intelligence Summary
+            </h3>
+            <p className="text-xs text-navy-900/50">
+              Evidence-cited summary derived from {data.health_summary.total_source_documents} source reports
+            </p>
+          </div>
+          <span className="pill bg-navy-900/5 text-navy-900/60 text-[11px]">Non-Diagnostic Record</span>
+        </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <h4 className="text-xs font-semibold text-navy-900/70 uppercase tracking-wide">Recorded Conditions</h4>
+            <ul className="mt-1.5 space-y-1">
+              {data.health_summary.recorded_conditions.map((c, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm text-navy-900">
+                  <span className="h-1.5 w-1.5 rounded-full bg-teal-600" />
+                  {c}
+                </li>
+              ))}
+              {!data.health_summary.recorded_conditions.length && (
+                <li className="text-xs text-navy-900/40">None recorded</li>
+              )}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold text-coral-600 uppercase tracking-wide">Critical Allergies</h4>
+            <ul className="mt-1.5 space-y-1">
+              {data.health_summary.recorded_allergies.map((a, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm text-coral-700 font-medium">
+                  <span className="h-1.5 w-1.5 rounded-full bg-coral-600" />
+                  {a}
+                </li>
+              ))}
+              {!data.health_summary.recorded_allergies.length && (
+                <li className="text-xs text-navy-900/40">No known drug allergies</li>
+              )}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold text-navy-900/70 uppercase tracking-wide">Current Medications</h4>
+            <ul className="mt-1.5 space-y-1">
+              {data.health_summary.recorded_medications.map((m, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm text-navy-900">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
+                  {m}
+                </li>
+              ))}
+              {!data.health_summary.recorded_medications.length && (
+                <li className="text-xs text-navy-900/40">None recorded</li>
+              )}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold text-navy-900/70 uppercase tracking-wide">Surgeries & Procedures</h4>
+            <ul className="mt-1.5 space-y-1">
+              {data.health_summary.recorded_surgeries.map((s, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm text-navy-900">
+                  <span className="h-1.5 w-1.5 rounded-full bg-navy-400" />
+                  {s}
+                </li>
+              ))}
+              {!data.health_summary.recorded_surgeries.length && (
+                <li className="text-xs text-navy-900/40">No prior surgeries recorded</li>
+              )}
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-5 rounded-md bg-navy-900/5 p-3 text-[11px] text-navy-900/70 italic border border-navy-900/10">
+          ⚠️ {data.health_summary.disclaimer}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Tab 2: Structured Clinical Facts Workspace ---
+function ClinicalFactsPanel() {
+  const [facts, setFacts] = useState<ClinicalFact[]>([]);
+  const [filterType, setFilterType] = useState<string>("ALL");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // New fact form state
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [factType, setFactType] = useState<string>("CONDITION");
+  const [factValue, setFactValue] = useState("");
+  const [factNotes, setFactNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const loadFacts = useCallback(() => {
+    setLoading(true);
+    const path = filterType === "ALL" ? "/patient/clinical-facts" : `/patient/clinical-facts?fact_type=${filterType}`;
+    api.get<ClinicalFact[]>(path)
+      .then(setFacts)
+      .catch((e) => setError(e instanceof ApiError ? e.message : "Failed to load clinical facts"))
+      .finally(() => setLoading(false));
+  }, [filterType]);
+
+  useEffect(loadFacts, [loadFacts]);
+
+  async function handleAddFact(e: React.FormEvent) {
+    e.preventDefault();
+    if (!factValue.trim()) return;
+    setSaving(true);
+    try {
+      await api.post("/patient/clinical-facts", {
+        fact_type: factType,
+        fact_value: factValue.trim(),
+        notes: factNotes.trim() || undefined,
+      });
+      setFactValue("");
+      setFactNotes("");
+      setShowAddForm(false);
+      loadFacts();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to record clinical fact");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeactivate(id: number) {
+    if (!confirm("Are you sure you want to deactivate this medical record item?")) return;
+    try {
+      await api.delete(`/patient/clinical-facts/${id}`);
+      loadFacts();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to deactivate item");
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display text-lg font-semibold text-navy-900">Structured Clinical Facts</h2>
+          <p className="text-xs text-navy-900/60">
+            Searchable, categorized clinical data points with cryptographic source provenance.
+          </p>
+        </div>
+        <button onClick={() => setShowAddForm(!showAddForm)} className="btn-primary text-xs">
+          {showAddForm ? "Cancel" : "+ Add Personal Medical Fact"}
+        </button>
+      </div>
+
+      {error && <Banner>{error}</Banner>}
+
+      {/* Add Fact Inline Form */}
+      {showAddForm && (
+        <form onSubmit={handleAddFact} className="card p-5 border-teal-200 bg-teal-50/20 space-y-3">
+          <h3 className="font-display text-sm font-semibold text-navy-900">Record a Health Fact</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="label">Category</label>
+              <select className="input" value={factType} onChange={(e) => setFactType(e.target.value)}>
+                <option value="CONDITION">Condition / Diagnosis</option>
+                <option value="ALLERGY">Allergy</option>
+                <option value="MEDICATION">Medication</option>
+                <option value="SURGERY">Surgery / Procedure</option>
+                <option value="DEVICE">Medical Device / Implant</option>
+                <option value="RISK">Special Risk</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Description / Name</label>
+              <input
+                className="input"
+                placeholder="e.g. Hypertension or Metformin 500mg"
+                value={factValue}
+                onChange={(e) => setFactValue(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+          <div>
+            <label className="label">Notes / Context (optional)</label>
+            <input
+              className="input"
+              placeholder="e.g. Diagnosed in 2021, taking regularly"
+              value={factNotes}
+              onChange={(e) => setFactNotes(e.target.value)}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setShowAddForm(false)} className="btn-secondary text-xs">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving || !factValue.trim()} className="btn-primary text-xs">
+              {saving ? "Saving…" : "Save Record"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Category Filter Chips */}
+      <div className="flex flex-wrap gap-1.5 border-b border-navy-900/10 pb-3">
+        {["ALL", "CONDITION", "ALLERGY", "MEDICATION", "SURGERY", "RISK"].map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setFilterType(cat)}
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              filterType === cat ? "bg-navy-900 text-white" : "bg-white text-navy-900/70 border border-navy-900/10 hover:bg-navy-50"
+            }`}
+          >
+            {cat}
+          </button>
+        ))}
+      </div>
+
+      {loading && <div className="p-8 text-center text-sm text-navy-900/50">Loading clinical facts…</div>}
+
+      {/* Fact Cards */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {facts.map((f) => {
+          const prov = f.provenance_records[0];
+          return (
+            <div key={f.id} className="card p-4 hover:border-navy-900/20 transition-all">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <span className="pill bg-navy-900/5 text-navy-900/60 text-[10px] uppercase font-bold tracking-wider">
+                    {f.fact_type}
+                  </span>
+                  <h4 className="mt-1 font-display text-base font-semibold text-navy-900">{f.fact_value}</h4>
+                  {f.clinical_status !== "ACTIVE" && (
+                    <span className="pill bg-gray-100 text-gray-600 text-[10px] mt-1">Status: {f.clinical_status}</span>
+                  )}
+                </div>
+                {f.clinical_status === "ACTIVE" && (
+                  <button
+                    onClick={() => handleDeactivate(f.id)}
+                    className="text-[11px] text-navy-900/40 hover:text-coral-600"
+                    title="Archive/Deactivate"
+                  >
+                    Archive
+                  </button>
+                )}
+              </div>
+
+              {/* Provenance Footer */}
+              {prov && (
+                <div className="mt-3 border-t border-navy-900/5 pt-2 flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                  <span className="text-navy-900/50">
+                    Source: <span className="font-medium text-navy-900/70">{prov.source_type.replace(/_/g, " ")}</span>
+                  </span>
+                  <span
+                    className={`pill text-[10px] ${
+                      prov.verification_status === "VERIFIED"
+                        ? "bg-teal-50 text-teal-700 border border-teal-200"
+                        : prov.verification_status === "REVIEWED"
+                        ? "bg-blue-50 text-blue-700 border border-blue-200"
+                        : "bg-amber-50 text-amber-700 border border-amber-200"
+                    }`}
+                  >
+                    {prov.verification_status}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!loading && !facts.length && (
+          <div className="col-span-full card p-8 text-center text-sm text-navy-900/50">
+            No clinical facts recorded in this category.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- Tab 3: Longitudinal Health Timeline ---
+function HealthTimelinePanel() {
+  const [events, setEvents] = useState<HealthTimelineEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<{ events: HealthTimelineEvent[] }>("/patient/health-timeline?limit=50")
+      .then((res) => setEvents(res.events))
+      .catch((e) => setError(e instanceof ApiError ? e.message : "Failed to load timeline"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="font-display text-lg font-semibold text-navy-900">Longitudinal Health Timeline</h2>
+        <p className="text-xs text-navy-900/60">
+          Chronological record merging medical document uploads, clinical facts, and emergency events.
+        </p>
+      </div>
+
+      {error && <Banner>{error}</Banner>}
+      {loading && <div className="card p-8 text-center text-sm text-navy-900/50">Loading timeline events…</div>}
+
+      <div className="relative border-l-2 border-navy-900/10 ml-4 pl-6 space-y-6">
+        {events.map((ev) => (
+          <div key={ev.id} className="relative group">
+            {/* Timeline node icon */}
+            <div
+              className={`absolute -left-[31px] top-1 h-4 w-4 rounded-full border-2 border-white ${
+                ev.event_type === "EMERGENCY_VISIT"
+                  ? "bg-coral-500 ring-4 ring-coral-100"
+                  : ev.event_type === "REPORT_UPLOADED"
+                  ? "bg-teal-600 ring-4 ring-teal-100"
+                  : "bg-navy-600 ring-4 ring-navy-100"
+              }`}
+            />
+
+            <div className="card p-4 hover:shadow-md transition-shadow">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`pill text-[10px] font-bold uppercase tracking-wider ${
+                      ev.event_type === "EMERGENCY_VISIT"
+                        ? "bg-coral-50 text-coral-700 border border-coral-200"
+                        : ev.event_type === "REPORT_UPLOADED"
+                        ? "bg-teal-50 text-teal-700 border border-teal-200"
+                        : "bg-navy-50 text-navy-700 border border-navy-200"
+                    }`}
+                  >
+                    {ev.event_type.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-xs font-semibold text-navy-900">{ev.event_date || "Undated"}</span>
+                </div>
+                {ev.verification_status && (
+                  <span className="text-[11px] text-navy-900/40">Verified: {ev.verification_status}</span>
+                )}
+              </div>
+
+              <h4 className="mt-2 font-display text-base font-semibold text-navy-900">{ev.title}</h4>
+              <p className="mt-1 text-sm text-navy-900/70">{ev.description}</p>
+
+              {ev.source_reference && (
+                <div className="mt-3 text-[11px] text-navy-900/50 flex items-center justify-between border-t border-navy-900/5 pt-2">
+                  <span>Source: {ev.source_reference}</span>
+                  {ev.provenance_source && (
+                    <span className="pill bg-navy-900/5 text-navy-900/60 text-[10px]">
+                      {ev.provenance_source}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {!loading && !events.length && (
+          <div className="card p-8 text-center text-sm text-navy-900/50">
+            No chronological timeline events recorded yet.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- Tab 4: Medical Reports Workspace ---
+function ReportsPanel() {
+  const [reports, setReports] = useState<ReportSummary[]>([]);
+  const [title, setTitle] = useState("");
+  const [reportType, setReportType] = useState("Discharge Summary");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Detail drawer state
+  const [selectedReport, setSelectedReport] = useState<(ReportSummary & { extracted_text?: string }) | null>(null);
+
+  const load = useCallback(() => {
+    api.get<ReportSummary[]>("/patient/medical-reports")
+      .then(setReports)
+      .catch(() => {});
+  }, []);
+
+  useEffect(load, [load]);
+
+  async function upload() {
+    if (!file || !title) return;
+    setBusy(true);
+    setError(null);
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", title);
+    form.append("report_type", reportType);
+    try {
+      await api.postForm("/report/upload", form);
+      setTitle("");
+      setFile(null);
+      load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openReportDetail(reportId: number) {
+    try {
+      const detail = await api.get<ReportSummary & { extracted_text?: string }>(`/patient/medical-reports/${reportId}`);
+      setSelectedReport(detail);
+    } catch {
+      // Fallback
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Upload Box */}
+      <div className="card p-6">
+        <h2 className="font-display text-lg font-semibold text-navy-900">Upload a Medical Document</h2>
+        <p className="mt-1 text-xs text-navy-900/60">
+          Upload hospital discharge summaries, laboratory reports, or prescriptions. Text is securely extracted
+          (OCR) to support pre-arrival emergency briefs.
+        </p>
+
+        {error && <div className="mt-3"><Banner>{error}</Banner></div>}
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px_auto]">
+          <input
+            className="input"
+            placeholder="Report title (e.g. Cardiology Consultation - Aug 2025)"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+          <select className="input" value={reportType} onChange={(e) => setReportType(e.target.value)}>
+            <option value="Discharge Summary">Discharge Summary</option>
+            <option value="Prescription">Prescription</option>
+            <option value="Lab Report">Lab Report</option>
+            <option value="Diagnostic Imaging">Diagnostic Imaging</option>
+            <option value="Consultation Note">Consultation Note</option>
+            <option value="Other">Other</option>
+          </select>
+          <div className="flex gap-2">
+            <input
+              className="input text-xs"
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.txt"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+            <button
+              className="btn-primary"
+              disabled={busy || !file || !title}
+              onClick={upload}
+            >
+              {busy ? "Uploading…" : "Upload"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Reports List */}
+      <div className="card p-6">
+        <h3 className="font-display text-base font-semibold text-navy-900">
+          Your Uploaded Documents ({reports.length})
+        </h3>
+        <ul className="mt-3 divide-y divide-navy-900/10">
+          {reports.map((r) => (
+            <li key={r.id} className="flex items-center justify-between py-3 text-sm hover:bg-navy-50/50 px-2 rounded-md">
+              <div>
+                <p className="font-medium text-navy-900">{r.title}</p>
+                <p className="text-xs text-navy-900/50">
+                  {r.report_type} · {r.report_date || "Date unspecified"} · Uploaded: {r.uploaded_at?.slice(0, 10)}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span
+                  className={`pill text-xs ${
+                    r.ocr_status === "ok" ? "bg-teal-500/10 text-teal-700" : "bg-amber-500/10 text-amber-700"
+                  }`}
+                >
+                  OCR: {r.ocr_status}
+                </span>
+                <button
+                  onClick={() => openReportDetail(r.id)}
+                  className="btn-secondary text-xs px-2.5 py-1"
+                >
+                  View Details
+                </button>
+              </div>
+            </li>
+          ))}
+          {!reports.length && <p className="py-3 text-sm text-navy-900/50">No reports uploaded yet.</p>}
+        </ul>
+      </div>
+
+      {/* Report Extracted Text Modal */}
+      {selectedReport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/60 p-4">
+          <div className="card max-h-[85vh] w-full max-w-2xl overflow-y-auto p-6 space-y-4">
+            <div className="flex items-start justify-between border-b border-navy-900/10 pb-3">
+              <div>
+                <h3 className="font-display text-lg font-bold text-navy-900">{selectedReport.title}</h3>
+                <p className="text-xs text-navy-900/60">
+                  {selectedReport.report_type} · {selectedReport.report_date || "No date recorded"}
+                </p>
+              </div>
+              <button onClick={() => setSelectedReport(null)} className="btn-secondary text-xs px-2 py-1">
+                ✕ Close
+              </button>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-navy-900 uppercase tracking-wider mb-2">
+                Extracted Clinical Content (OCR)
+              </h4>
+              <div className="rounded-md bg-navy-900/5 p-4 text-xs font-mono text-navy-900 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
+                {selectedReport.extracted_text || "No text extracted from this document."}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button onClick={() => setSelectedReport(null)} className="btn-secondary text-xs">
+                Close Viewer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Tab 5: Profile & Consent ---
+function ProfilePanel() {
+  const [p, setP] = useState<PatientProfile | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api.get<PatientProfile>("/patient/me").then(setP);
+  }, []);
+
+  if (!p) return <p className="text-sm text-navy-900/50">Loading profile…</p>;
+
+  function set<K extends keyof PatientProfile>(k: K, v: PatientProfile[K]) {
+    setP((cur) => cur && { ...cur, [k]: v });
+  }
+
+  async function save() {
+    if (!p) return;
+    await api.put(`/patient/${p.id}`, {
+      full_name: p.full_name,
+      phone: p.phone,
+      gender: p.gender,
+      blood_group: p.blood_group,
+      address: p.address,
+      known_conditions: p.known_conditions,
+      known_allergies: p.known_allergies,
+      current_medications: p.current_medications,
+      consent_ai_summary: p.consent_ai_summary,
+      emergency_contacts: p.emergency_contacts,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <div className="card space-y-4 p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-lg font-semibold text-navy-900">Medical Profile & Consent</h2>
+        <span className="pill bg-navy-900/5 text-navy-900/60">
+          Family Code: <span className="ml-1 font-mono font-bold">{p.family_code}</span>
+        </span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="label">Full Name</label>
+          <input className="input" value={p.full_name} onChange={(e) => set("full_name", e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Phone</label>
+          <input className="input" value={p.phone || ""} onChange={(e) => set("phone", e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Blood Group</label>
+          <input className="input" value={p.blood_group || ""} onChange={(e) => set("blood_group", e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Address</label>
+          <input className="input" value={p.address || ""} onChange={(e) => set("address", e.target.value)} />
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Known Conditions (Self-Reported Baseline)</label>
+        <textarea
+          className="input"
+          rows={2}
+          value={p.known_conditions || ""}
+          onChange={(e) => set("known_conditions", e.target.value)}
+        />
+      </div>
+      <div>
+        <label className="label">Known Allergies</label>
+        <textarea
+          className="input"
+          rows={2}
+          value={p.known_allergies || ""}
+          onChange={(e) => set("known_allergies", e.target.value)}
+        />
+      </div>
+      <div>
+        <label className="label">Current Medications</label>
+        <textarea
+          className="input"
+          rows={2}
+          value={p.current_medications || ""}
+          onChange={(e) => set("current_medications", e.target.value)}
+        />
+      </div>
+
+      <div className="rounded-md border border-navy-900/10 p-3 bg-navy-50/50">
+        <label className="flex items-center gap-2 text-sm text-navy-900/80 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={p.consent_ai_summary}
+            onChange={(e) => set("consent_ai_summary", e.target.checked)}
+          />
+          <span className="font-medium text-navy-900">
+            Authorize Emergency Pre-Arrival AI Summary
+          </span>
+        </label>
+        <p className="mt-1 text-xs text-navy-900/60 pl-6">
+          Allows the AI orchestration pipeline to synthesize evidence-cited briefs from uploaded documents
+          for attending trauma teams when an SOS is triggered.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3 pt-2">
+        <button className="btn-primary" onClick={save}>
+          Save Profile
+        </button>
+        {saved && <span className="text-sm font-medium text-teal-700">✓ Profile Updated</span>}
+      </div>
+    </div>
+  );
+}
+
+// --- Tab 6: SOS Trigger Panel ---
 function SosPanel({ onCreated }: { onCreated: () => void }) {
   const [type, setType] = useState<EmergencyType>("stroke");
   const [symptoms, setSymptoms] = useState("");
@@ -53,65 +828,109 @@ function SosPanel({ onCreated }: { onCreated: () => void }) {
     setError(null);
     const done = (lat: number, lng: number) =>
       api.post("/emergency", { lat, lng, emergency_type: type, symptoms: symptoms || undefined })
-        .then(onCreated).catch((e) => setError(e instanceof ApiError ? e.message : "Could not create SOS")).finally(() => setBusy(false));
+        .then(onCreated)
+        .catch((e) => setError(e instanceof ApiError ? e.message : "Could not trigger SOS"))
+        .finally(() => setBusy(false));
+
     if (!navigator.geolocation) return done(18.5204, 73.8567); // Pune fallback
-    navigator.geolocation.getCurrentPosition((pos) => done(pos.coords.latitude, pos.coords.longitude),
-      () => done(18.5204, 73.8567), { timeout: 4000 });
+    navigator.geolocation.getCurrentPosition(
+      (pos) => done(pos.coords.latitude, pos.coords.longitude),
+      () => done(18.5204, 73.8567),
+      { timeout: 4000 }
+    );
   }
 
   return (
     <div className="card p-6">
-      <h2 className="font-display text-lg font-semibold text-navy-900">Emergency SOS</h2>
-      <p className="mt-1 text-sm text-navy-900/60">Your GPS location is captured automatically. Choose what best matches what's happening.</p>
+      <h2 className="font-display text-lg font-semibold text-navy-900">Trigger Emergency SOS</h2>
+      <p className="mt-1 text-sm text-navy-900/60">
+        Captures your live GPS coordinates and instantly alerts nearby hospitals with pre-arrival clinical context.
+      </p>
+
       {error && <div className="mt-3"><Banner>{error}</Banner></div>}
+
       <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
         {TYPES.map((t) => (
-          <button key={t} onClick={() => setType(t)}
-            className={`rounded-md border px-3 py-2 text-xs font-medium capitalize ${type === t ? "border-teal-600 bg-teal-50 text-teal-700" : "border-navy-900/15 text-navy-900/70 hover:bg-navy-50"}`}>
+          <button
+            key={t}
+            onClick={() => setType(t)}
+            className={`rounded-md border px-3 py-2 text-xs font-medium capitalize ${
+              type === t
+                ? "border-teal-600 bg-teal-50 text-teal-700 font-bold"
+                : "border-navy-900/15 text-navy-900/70 hover:bg-navy-50"
+            }`}
+          >
             {TYPE_LABEL[t]}
           </button>
         ))}
       </div>
-      <textarea className="input mt-4" rows={3} placeholder="Describe symptoms (optional)"
-        value={symptoms} onChange={(e) => setSymptoms(e.target.value)} />
-      <button onClick={trigger} disabled={busy} className="btn-danger mt-4 w-full text-base py-3">
-        {busy ? "Sending SOS…" : "🆘  Trigger Emergency SOS"}
+
+      <textarea
+        className="input mt-4"
+        rows={3}
+        placeholder="Describe what is happening (optional, e.g. severe chest pain or sudden loss of speech)"
+        value={symptoms}
+        onChange={(e) => setSymptoms(e.target.value)}
+      />
+
+      <button onClick={trigger} disabled={busy} className="btn-danger mt-4 w-full py-3 text-base font-bold shadow-md">
+        {busy ? "Broadcasting Emergency SOS…" : "🆘  TRIGGER EMERGENCY SOS NOW"}
       </button>
     </div>
   );
 }
 
+// --- Active Emergency View ---
 function ActiveEmergency({ c, onChange }: { c: CaseDetail; onChange: () => void }) {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
-  useEffect(() => { api.get<TimelineEntry[]>(`/emergency/${c.id}/timeline`).then(setTimeline).catch(() => {}); }, [c.id, c.updated_at]);
+
+  useEffect(() => {
+    api.get<TimelineEntry[]>(`/emergency/${c.id}/timeline`)
+      .then(setTimeline)
+      .catch(() => {});
+  }, [c.id, c.updated_at]);
+
   const prio = priorityLabel(c.priority);
 
   return (
     <div className="space-y-5">
       <div className="card p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-display text-lg font-semibold text-navy-900">{TYPE_LABEL[c.emergency_type]} emergency</h2>
+          <h2 className="font-display text-lg font-semibold text-navy-900">
+            {TYPE_LABEL[c.emergency_type]} Emergency Case #{c.id}
+          </h2>
           <span className={`pill ${prio.className}`}>{prio.label}</span>
         </div>
-        <div className="mt-3"><StatusStepper status={c.status} /></div>
+        <div className="mt-3">
+          <StatusStepper status={c.status} />
+        </div>
       </div>
+
       <div className="grid gap-5 sm:grid-cols-2">
         <EtaCard c={c} />
         <div className="card p-5">
-          <h3 className="font-display text-base font-semibold text-navy-900">Hospital</h3>
+          <h3 className="font-display text-base font-semibold text-navy-900">Hospital Coordination</h3>
           {c.hospital ? (
             <div className="mt-2 text-sm text-navy-900/80">
-              <p className="font-medium text-navy-900">{c.hospital.name}</p>
+              <p className="font-bold text-navy-900">{c.hospital.name}</p>
               <p>{c.hospital.address}</p>
-              {c.doctor && <p className="mt-2">Doctor: <span className="font-medium">{c.doctor.name}</span> ({c.doctor.specialty})</p>}
+              {c.doctor && (
+                <p className="mt-2">
+                  Attending Specialist: <span className="font-medium text-navy-900">{c.doctor.name}</span> ({c.doctor.specialty})
+                </p>
+              )}
             </div>
-          ) : <p className="mt-2 text-sm text-navy-900/50">Finding the nearest capable hospital…</p>}
+          ) : (
+            <p className="mt-2 text-sm text-navy-900/50">Routing to nearest available facility…</p>
+          )}
         </div>
       </div>
+
       <SummaryCard s={c.ai_summary} />
       {!!c.checklist?.length && <ChecklistCard items={c.checklist} />}
+
       <div className="card p-5">
-        <h3 className="font-display text-base font-semibold text-navy-900">Timeline</h3>
+        <h3 className="font-display text-base font-semibold text-navy-900">Incident Event Log</h3>
         <ul className="mt-3 space-y-2">
           {timeline.map((t, i) => (
             <li key={i} className="flex justify-between gap-4 text-sm">
@@ -121,110 +940,10 @@ function ActiveEmergency({ c, onChange }: { c: CaseDetail; onChange: () => void 
           ))}
         </ul>
       </div>
-      <button onClick={onChange} className="btn-secondary w-full">Refresh</button>
-    </div>
-  );
-}
 
-function ProfilePanel() {
-  const [p, setP] = useState<PatientProfile | null>(null);
-  const [saved, setSaved] = useState(false);
-  useEffect(() => { api.get<PatientProfile>("/patient/me").then(setP); }, []);
-  if (!p) return <p className="text-sm text-navy-900/50">Loading…</p>;
-
-  function set<K extends keyof PatientProfile>(k: K, v: PatientProfile[K]) { setP((cur) => cur && { ...cur, [k]: v }); }
-
-  async function save() {
-    if (!p) return;
-    await api.put(`/patient/${p.id}`, {
-      full_name: p.full_name, phone: p.phone, gender: p.gender, blood_group: p.blood_group, address: p.address,
-      known_conditions: p.known_conditions, known_allergies: p.known_allergies, current_medications: p.current_medications,
-      consent_ai_summary: p.consent_ai_summary, emergency_contacts: p.emergency_contacts,
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
-
-  return (
-    <div className="card space-y-4 p-6">
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold text-navy-900">Medical profile</h2>
-        <span className="pill bg-navy-900/5 text-navy-900/60">Family code: <span className="ml-1 font-mono">{p.family_code}</span></span>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div><label className="label">Full name</label><input className="input" value={p.full_name} onChange={(e) => set("full_name", e.target.value)} /></div>
-        <div><label className="label">Phone</label><input className="input" value={p.phone || ""} onChange={(e) => set("phone", e.target.value)} /></div>
-        <div><label className="label">Blood group</label><input className="input" value={p.blood_group || ""} onChange={(e) => set("blood_group", e.target.value)} /></div>
-        <div><label className="label">Address</label><input className="input" value={p.address || ""} onChange={(e) => set("address", e.target.value)} /></div>
-      </div>
-      <div><label className="label">Known conditions (self-reported)</label><textarea className="input" rows={2} value={p.known_conditions || ""} onChange={(e) => set("known_conditions", e.target.value)} /></div>
-      <div><label className="label">Known allergies</label><textarea className="input" rows={2} value={p.known_allergies || ""} onChange={(e) => set("known_allergies", e.target.value)} /></div>
-      <div><label className="label">Current medications</label><textarea className="input" rows={2} value={p.current_medications || ""} onChange={(e) => set("current_medications", e.target.value)} /></div>
-      <label className="flex items-center gap-2 text-sm text-navy-900/80">
-        <input type="checkbox" checked={p.consent_ai_summary} onChange={(e) => set("consent_ai_summary", e.target.checked)} />
-        Allow AI to summarize my uploaded reports during an emergency
-      </label>
-      <div className="flex items-center gap-3">
-        <button className="btn-primary" onClick={save}>Save changes</button>
-        {saved && <span className="text-sm text-teal-700">Saved</span>}
-      </div>
-    </div>
-  );
-}
-
-function ReportsPanel() {
-  const [reports, setReports] = useState<ReportSummary[]>([]);
-  const [title, setTitle] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => { api.get<{ id: number }>("/patient/me").then((p) => api.get<ReportSummary[]>(`/report/patient/${p.id}`).then(setReports)); }, []);
-  useEffect(load, [load]);
-
-  async function upload() {
-    if (!file || !title) return;
-    setBusy(true);
-    setError(null);
-    const form = new FormData();
-    form.append("file", file);
-    form.append("title", title);
-    form.append("report_type", "other");
-    try {
-      await api.postForm("/report/upload", form);
-      setTitle(""); setFile(null); load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Upload failed");
-    } finally { setBusy(false); }
-  }
-
-  return (
-    <div className="space-y-5">
-      <div className="card p-6">
-        <h2 className="font-display text-lg font-semibold text-navy-900">Upload a medical report</h2>
-        {error && <div className="mt-3"><Banner>{error}</Banner></div>}
-        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-          <input className="input" placeholder="Title (e.g. Discharge summary - Aug 2025)" value={title} onChange={(e) => setTitle(e.target.value)} />
-          <input className="input" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-          <button className="btn-primary" disabled={busy || !file || !title} onClick={upload}>{busy ? "Uploading…" : "Upload"}</button>
-        </div>
-        <p className="mt-2 text-xs text-navy-900/50">PDF, image or text, up to 10 MB. Text is extracted automatically (OCR) for the AI emergency brief.</p>
-      </div>
-      <div className="card p-6">
-        <h3 className="font-display text-base font-semibold text-navy-900">Your reports ({reports.length})</h3>
-        <ul className="mt-3 divide-y divide-navy-900/10">
-          {reports.map((r) => (
-            <li key={r.id} className="flex items-center justify-between py-2 text-sm">
-              <div>
-                <p className="font-medium text-navy-900">{r.title}</p>
-                <p className="text-navy-900/50">{r.report_type} · {r.report_date || "no date"}</p>
-              </div>
-              <span className={`pill ${r.ocr_status === "ok" ? "bg-teal-500/10 text-teal-700" : "bg-amber-500/10 text-amber-700"}`}>{r.ocr_status}</span>
-            </li>
-          ))}
-          {!reports.length && <p className="py-3 text-sm text-navy-900/50">No reports uploaded yet.</p>}
-        </ul>
-      </div>
+      <button onClick={onChange} className="btn-secondary w-full">
+        Refresh Status
+      </button>
     </div>
   );
 }

@@ -272,6 +272,17 @@ class PatientClinicalFactCreate(BaseModel):
     provenance: ClinicalProvenanceCreate | None = None
 
 
+class PatientSelfFactCreate(BaseModel):
+    fact_type: FactType = "CONDITION"
+    fact_code: str | None = Field(default=None, max_length=80)
+    fact_value: str = Field(min_length=1, max_length=255)
+    normalized_value: str | None = Field(default=None, max_length=255)
+    clinical_status: str = Field(default="ACTIVE", max_length=30)
+    effective_from: str | None = None
+    effective_to: str | None = None
+    notes: str | None = None
+
+
 class PatientClinicalFactOut(BaseModel):
     id: int
     patient_id: int
@@ -286,6 +297,37 @@ class PatientClinicalFactOut(BaseModel):
     updated_at: datetime
     provenance_records: list[ClinicalProvenanceOut] = []
     model_config = ConfigDict(from_attributes=True)
+
+
+class PatientClinicalFactUpdate(BaseModel):
+    fact_value: str | None = Field(default=None, min_length=1, max_length=255)
+    normalized_value: str | None = None
+    clinical_status: str | None = Field(default=None, max_length=30)
+    effective_from: str | None = None
+    effective_to: str | None = None
+    update_notes: str | None = None
+
+
+class HealthTimelineEvent(BaseModel):
+    id: str
+    event_type: str  # REPORT_UPLOADED, CLINICAL_FACT, EMERGENCY_INCIDENT, EMERGENCY_VISIT, PROFILE_UPDATE
+    title: str
+    description: str
+    event_date: str | None = None
+    recorded_at: str
+    source_reference: str | None = None
+    provenance_source: str | None = None
+    verification_status: str | None = None
+    has_supporting_document: bool = False
+    report_id: int | None = None
+    metadata: dict = {}
+
+
+class HealthTimelineResponse(BaseModel):
+    events: list[HealthTimelineEvent]
+    total: int
+    limit: int
+    offset: int
 
 
 # Referral Schemas

@@ -31,6 +31,8 @@ export const api = {
   get: <T,>(path: string) => req<T>(path),
   post: <T,>(path: string, body?: unknown) => req<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
   put: <T,>(path: string, body?: unknown) => req<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
+  patch: <T,>(path: string, body?: unknown) => req<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
+  delete: <T,>(path: string) => req<T>(path, { method: "DELETE" }),
   postForm: <T,>(path: string, form: FormData) => req<T>(path, { method: "POST", body: form }),
   setToken: (t: string | null) => (t ? localStorage.setItem("ll_token", t) : localStorage.removeItem("ll_token")),
   getToken: token,
@@ -72,3 +74,78 @@ export interface PatientProfile {
 export interface ReportSummary { id: number; patient_id: number; title: string; report_type: string; report_date?: string; ocr_status: string; original_filename?: string; uploaded_at: string; }
 export interface DoctorSummary { id: number; name: string; specialty: string; qualification?: string; hospital_id: number; is_available: boolean; }
 export interface NotificationItem { id: number; case_id: number | null; title: string; message: string; channel: string; is_read: boolean; created_at: string; }
+
+// --- Prompt 04: Patient Health Vault Interfaces ---
+export interface ClinicalProvenance {
+  id: number;
+  clinical_fact_id: number;
+  source_type: "PATIENT_ENTERED" | "FAMILY_REPORTED" | "OCR_EXTRACTED" | "HOSPITAL_IMPORTED" | "DOCTOR_VERIFIED" | "OTHER" | "LEGACY_IMPORT";
+  source_report_id?: number | null;
+  source_reference?: string | null;
+  source_excerpt?: string | null;
+  extracted_at?: string;
+  verification_status: "UNVERIFIED" | "REVIEWED" | "VERIFIED" | "REJECTED" | "SUPERSEDED";
+  verified_by_user_id?: number | null;
+  verified_at?: string | null;
+  verification_notes?: string | null;
+}
+
+export interface ClinicalFact {
+  id: number;
+  patient_id: number;
+  fact_type: "CONDITION" | "ALLERGY" | "MEDICATION" | "SURGERY" | "DEVICE" | "RISK" | "OTHER";
+  fact_code?: string | null;
+  fact_value: string;
+  normalized_value?: string | null;
+  clinical_status: string;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  provenance_records: ClinicalProvenance[];
+}
+
+export interface HealthTimelineEvent {
+  id: string;
+  event_type: "REPORT_UPLOADED" | "CLINICAL_FACT" | "EMERGENCY_VISIT" | "EMERGENCY_INCIDENT" | string;
+  title: string;
+  description: string;
+  event_date: string | null;
+  recorded_at: string;
+  source_reference?: string | null;
+  provenance_source?: string | null;
+  verification_status?: string | null;
+  has_supporting_document: boolean;
+  report_id?: number | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface HealthTimelineResponse {
+  events: HealthTimelineEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface HealthVaultOverview {
+  patient: PatientProfile;
+  total_reports: number;
+  total_facts: number;
+  conditions_count: number;
+  allergies_count: number;
+  medications_count: number;
+  surgeries_count: number;
+  latest_report_date?: string | null;
+  latest_timeline_event?: string | null;
+  verification_summary: Record<string, number>;
+  recent_reports: ReportSummary[];
+  recent_facts: ClinicalFact[];
+  health_summary: {
+    recorded_conditions: string[];
+    recorded_allergies: string[];
+    recorded_medications: string[];
+    recorded_surgeries: string[];
+    total_source_documents: number;
+    disclaimer: string;
+  };
+}
