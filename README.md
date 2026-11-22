@@ -24,6 +24,14 @@ cd backend
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp ../.env.example ../.env
+
+# Database Migrations (Alembic)
+# For fresh database:
+alembic upgrade head
+# Or if adopting an existing database:
+alembic stamp head
+
+# Seed initial data (optional demo dataset)
 python ../database/seed.py
 uvicorn app.main:app --reload --port 8000
 
@@ -32,6 +40,14 @@ cd frontend
 npm install
 npm run dev   # http://localhost:5173, proxies /api and /ws to :8000
 ```
+
+### Database Migration Commands (Alembic)
+- Apply latest migrations: `alembic upgrade head`
+- Rollback one revision: `alembic downgrade -1`
+- Rollback to baseline: `alembic downgrade base`
+- View current migration status: `alembic current`
+- View migration history: `alembic history --verbose`
+- Stamp existing database: `alembic stamp head`
 
 ## Demo logins
 | Role | Email | Password |
