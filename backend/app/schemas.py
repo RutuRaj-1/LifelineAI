@@ -555,3 +555,120 @@ class EmergencyIncidentReportOut(BaseModel):
     verification_status: str
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# Multi-Hospital Referral Engine Schemas (Prompt 07)
+ReferralDeclineReasonCode = Literal[
+    "NO_BEDS",
+    "NO_SPECIALIST",
+    "DIVERT",
+    "RESOURCE_UNAVAILABLE",
+    "CLINICAL_REVIEW_DECLINED",
+    "CAPACITY_UNAVAILABLE",
+    "REQUIRED_SPECIALIST_UNAVAILABLE",
+    "REQUIRED_RESOURCE_UNAVAILABLE",
+    "DEPARTMENT_UNAVAILABLE",
+    "OTHER",
+]
+
+
+class ReferralBroadcastIn(BaseModel):
+    hospital_ids: list[int] = Field(min_length=1)
+    requested_resource_type: str = Field(default="ICU_BED", min_length=2, max_length=40)
+    priority: int | None = Field(default=None, ge=1, le=5)
+    notes: str | None = None
+    response_timeout_minutes: int = Field(default=15, ge=1, le=1440)
+    idempotency_key: str | None = Field(default=None, max_length=100)
+
+
+class ReferralAcceptIn(BaseModel):
+    notes: str | None = None
+
+
+class ReferralDeclineIn(BaseModel):
+    reason_code: str = Field(default="OTHER", max_length=60)
+    notes: str | None = None
+
+
+class ReferralClarificationIn(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+
+
+class ReferralClarificationAnswerIn(BaseModel):
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+class ReferralCancelIn(BaseModel):
+    reason: str | None = None
+
+
+class ReferralResponseOut(BaseModel):
+    id: int
+    referral_request_id: int
+    responding_user_id: int | None
+    responding_user_name: str | None = None
+    response_type: str
+    response_notes: str | None
+    reason_code: str | None
+    responded_at: datetime
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReferralOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    hospital_id: int
+    hospital_name: str | None = None
+    hospital_city: str | None = None
+    request_reference: str
+    request_round: int
+    status: str
+    requested_resource_type: str | None
+    priority: int | None
+    requested_at: datetime
+    response_deadline: datetime | None
+    responded_at: datetime | None
+    is_active_acceptance: bool
+    decline_reason_code: str | None
+    clarification_notes: str | None
+    notes: str | None
+    responses: list[ReferralResponseOut] = []
+    patient_summary: dict | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EligibleHospitalResourceSummary(BaseModel):
+    resource_type: str
+    usable_capacity: int
+    staffed_capacity: int | None = None
+    operational_status: str
+    freshness_status: str
+    is_confirmed_fresh: bool
+
+
+class EligibleHospitalItem(BaseModel):
+    hospital_id: int
+    hospital_name: str
+    city: str | None = None
+    address: str | None = None
+    phone: str | None = None
+    eligibility_status: str
+    is_eligible: bool
+    reasons: list[str] = []
+    verified_capabilities: list[str] = []
+    resource_summary: EligibleHospitalResourceSummary | None = None
+    is_dispatched: bool = False
+    referral_request_id: int | None = None
+    current_referral_status: str | None = None
+
+
+class ReferralEligibilityOut(BaseModel):
+    emergency_case_id: int
+    emergency_type: str
+    specialty: str | None = None
+    requested_resource_type: str
+    referral_round: int
+    eligible_hospitals: list[EligibleHospitalItem] = []

@@ -9,6 +9,8 @@ from ..models import (
     HospitalCapability,
     HospitalDepartment,
     HospitalResource,
+    ReferralRequest,
+    ReferralResponse,
     ResourceStatusHistory,
     User,
 )
@@ -22,17 +24,21 @@ from ..schemas import (
     HospitalOut,
     HospitalProfileUpdate,
     OperationalResourceOut,
+    ReferralAcceptIn,
+    ReferralClarificationIn,
+    ReferralDeclineIn,
     ReserveIn,
     ResourceAttestationIn,
     ResourceConfigUpdate,
 )
 from ..security import require_roles
-from ..services import ops, resource_service
+from ..services import ops, referral_service, resource_service
 from ..services.serialize import (
     capability_dict,
     case_dict,
     department_dict,
     hospital_dict,
+    referral_request_dict,
     resource_dict,
     resource_history_dict,
 )
@@ -533,3 +539,146 @@ def case_history(user: User = Depends(require_roles("hospital")), db: Session = 
         .all()
     )
     return [case_dict(c, "hospital", detail=True) for c in cases]
+
+
+# --- 6. Incoming Referral Coordination & Decision Workflows (Prompt 07) ---
+
+
+@router.get("/referrals/incoming")
+def list_incoming_referrals(
+    status_filter: str | None = None,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Authenticated Hospital Inbox:
+    Retrieves incoming emergency referral requests directed to this hospital.
+    Strictly isolated: Hospital A can never access Hospital B's referrals.
+    """
+    h = _get_user_hospital(db, user)
+
+    # Automatically check for expired referrals
+    referral_service.expire_stale_referrals(db)
+
+    q = (
+        db.query(ReferralRequest)
+        .filter(ReferralRequest.hospital_id == h.id)
+    )
+
+    if status_filter:
+        s = status_filter.strip().upper()
+        if s == "PENDING":
+            q = q.filter(ReferralRequest.status.in_(["SENT", "REVIEWING"]))
+        elif s == "ACTIVE":
+            q = q.filter(ReferralRequest.status.in_(["SENT", "REVIEWING", "CLARIFICATION_REQUIRED", "ACCEPTED"]))
+        else:
+            q = q.filter(ReferralRequest.status == s)
+
+    total = q.count()
+    rows = (
+        q.order_by(
+            ReferralRequest.priority.asc(),
+            ReferralRequest.requested_at.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "hospital_id": h.id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": [referral_request_dict(r, role="hospital", detail=False) for r in rows],
+    }
+
+
+@router.get("/referrals/{referral_id}")
+def get_incoming_referral_detail(
+    referral_id: int,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Detailed clinical handover view for an incoming referral request.
+    Data minimized: provides vital emergency context, allergies, verified facts, and requested resource.
+    """
+    h = _get_user_hospital(db, user)
+    referral = db.get(ReferralRequest, referral_id)
+    if not referral or referral.hospital_id != h.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Referral request not found at your hospital.")
+
+    # Automatically transition SENT -> REVIEWING on first opening
+    if referral.status == "SENT":
+        referral.status = "REVIEWING"
+        referral.updated_at = utc_now()
+        db.commit()
+        db.refresh(referral)
+
+    return referral_request_dict(referral, role="hospital", detail=True)
+
+
+@router.post("/referrals/{referral_id}/accept")
+def accept_incoming_referral(
+    referral_id: int,
+    body: ReferralAcceptIn,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Explicit, authenticated hospital acceptance:
+    - Revalidates resource operational status, freshness window, and usable capacity.
+    - Atomically creates and confirms ResourceReservation.
+    - Enforces Single Active Acceptance Invariant: at most one hospital accepts an emergency.
+    - Transitions referral status to 'ACCEPTED'.
+    """
+    accepted = referral_service.accept_referral(
+        db=db,
+        referral_id=referral_id,
+        responding_user=user,
+        notes=body.notes,
+    )
+    return referral_request_dict(accepted, role="hospital", detail=True)
+
+
+@router.post("/referrals/{referral_id}/decline")
+def decline_incoming_referral(
+    referral_id: int,
+    body: ReferralDeclineIn,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Explicit hospital decline with structured reason code:
+    (NO_BEDS, NO_SPECIALIST, DIVERT, RESOURCE_UNAVAILABLE, CLINICAL_REVIEW_DECLINED, OTHER).
+    """
+    declined = referral_service.decline_referral(
+        db=db,
+        referral_id=referral_id,
+        responding_user=user,
+        reason_code=body.reason_code,
+        notes=body.notes,
+    )
+    return referral_request_dict(declined, role="hospital", detail=True)
+
+
+@router.post("/referrals/{referral_id}/clarification")
+def request_referral_clarification(
+    referral_id: int,
+    body: ReferralClarificationIn,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Hospital requests clinical or operational clarification from the originating emergency coordinator/doctor.
+    """
+    clarified = referral_service.request_clarification(
+        db=db,
+        referral_id=referral_id,
+        responding_user=user,
+        question=body.question,
+    )
+    return referral_request_dict(clarified, role="hospital", detail=True)

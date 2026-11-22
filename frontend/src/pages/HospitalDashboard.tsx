@@ -7,6 +7,9 @@ import {
   HospitalDepartment,
   HospitalProfile,
   OperationalResource,
+  referralApi,
+  ReferralItem,
+  ReferralResponseItem,
   ResourceHistoryResponse,
   ResourceStatusHistory,
 } from "../lib/api";
@@ -25,7 +28,7 @@ interface Scenario {
   emergency_type: string;
 }
 
-type TabKey = "queue" | "resources" | "profile" | "departments" | "capabilities";
+type TabKey = "queue" | "referrals" | "resources" | "profile" | "departments" | "capabilities";
 
 export default function HospitalDashboard() {
   const [activeTab, setActiveTab] = useState<TabKey>("queue");
@@ -43,6 +46,21 @@ export default function HospitalDashboard() {
   const [capabilities, setCapabilities] = useState<HospitalCapability[]>([]);
   const [loadingRegistry, setLoadingRegistry] = useState(false);
   const [registryMessage, setRegistryMessage] = useState<string | null>(null);
+
+  // Incoming Referrals State (Prompt 07)
+  const [incomingReferrals, setIncomingReferrals] = useState<ReferralItem[]>([]);
+  const [loadingReferrals, setLoadingReferrals] = useState(false);
+  const [referralFilter, setReferralFilter] = useState<string>("ALL");
+  const [selectedReferral, setSelectedReferral] = useState<ReferralItem | null>(null);
+  const [acceptModalRef, setAcceptModalRef] = useState<ReferralItem | null>(null);
+  const [acceptNotes, setAcceptNotes] = useState("");
+  const [declineModalRef, setDeclineModalRef] = useState<ReferralItem | null>(null);
+  const [declineReason, setDeclineReason] = useState("NO_BEDS");
+  const [declineNotes, setDeclineNotes] = useState("");
+  const [clarifyModalRef, setClarifyModalRef] = useState<ReferralItem | null>(null);
+  const [clarifyQuestion, setClarifyQuestion] = useState("");
+  const [actionInProgress, setActionInProgress] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Operational Resource Intelligence (Prompt 06)
   const [operationalResources, setOperationalResources] = useState<OperationalResource[]>([]);
@@ -133,22 +151,92 @@ export default function HospitalDashboard() {
       .finally(() => setLoadingRegistry(false));
   }, []);
 
+  const loadIncomingReferrals = useCallback(() => {
+    setLoadingReferrals(true);
+    referralApi
+      .getIncoming(referralFilter === "ALL" ? undefined : referralFilter)
+      .then((res) => {
+        setIncomingReferrals(res.items);
+      })
+      .catch((err) => {
+        console.error("Failed to load incoming referrals:", err);
+      })
+      .finally(() => setLoadingReferrals(false));
+  }, [referralFilter]);
+
+  async function handleAcceptReferral() {
+    if (!acceptModalRef) return;
+    setActionInProgress(true);
+    setActionError(null);
+    try {
+      await referralApi.accept(acceptModalRef.id, acceptNotes || undefined);
+      setAcceptModalRef(null);
+      setAcceptNotes("");
+      loadIncomingReferrals();
+      refreshQueue();
+      loadOperationalResources();
+      setRegistryMessage("Referral successfully accepted! Bed/resource reserved.");
+    } catch (err: any) {
+      setActionError(err.message || "Failed to accept referral.");
+    } finally {
+      setActionInProgress(false);
+    }
+  }
+
+  async function handleDeclineReferral() {
+    if (!declineModalRef) return;
+    setActionInProgress(true);
+    setActionError(null);
+    try {
+      await referralApi.decline(declineModalRef.id, declineReason, declineNotes || undefined);
+      setDeclineModalRef(null);
+      setDeclineNotes("");
+      loadIncomingReferrals();
+      setRegistryMessage("Referral declined.");
+    } catch (err: any) {
+      setActionError(err.message || "Failed to decline referral.");
+    } finally {
+      setActionInProgress(false);
+    }
+  }
+
+  async function handleRequestClarification() {
+    if (!clarifyModalRef || !clarifyQuestion.trim()) return;
+    setActionInProgress(true);
+    setActionError(null);
+    try {
+      await referralApi.requestClarification(clarifyModalRef.id, clarifyQuestion.trim());
+      setClarifyModalRef(null);
+      setClarifyQuestion("");
+      loadIncomingReferrals();
+      setRegistryMessage("Clarification question sent to emergency coordinator.");
+    } catch (err: any) {
+      setActionError(err.message || "Failed to submit clarification question.");
+    } finally {
+      setActionInProgress(false);
+    }
+  }
+
   useEffect(() => {
     refreshQueue();
     loadOperationalResources();
-  }, [refreshQueue, loadOperationalResources]);
+    loadIncomingReferrals();
+  }, [refreshQueue, loadOperationalResources, loadIncomingReferrals]);
 
   useEffect(() => {
     if (activeTab === "resources") {
       loadOperationalResources();
+    } else if (activeTab === "referrals") {
+      loadIncomingReferrals();
     } else if (activeTab !== "queue") {
       loadRegistry();
     }
-  }, [activeTab, loadRegistry, loadOperationalResources]);
+  }, [activeTab, loadRegistry, loadOperationalResources, loadIncomingReferrals]);
 
   useEmergencyEvents(() => {
     refreshQueue();
     loadOperationalResources();
+    loadIncomingReferrals();
   });
 
   useEffect(() => {
@@ -331,6 +419,16 @@ export default function HospitalDashboard() {
             🚨 Emergency Queue ({queue.length})
           </button>
           <button
+            onClick={() => setActiveTab("referrals")}
+            className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
+              activeTab === "referrals"
+                ? "bg-teal-700 text-white shadow-sm"
+                : "bg-navy-900/5 text-navy-900/70 hover:bg-navy-900/10"
+            }`}
+          >
+            📨 Referrals Inbox ({incomingReferrals.filter(r => r.status === "SENT" || r.status === "REVIEWING" || r.status === "CLARIFICATION_REQUIRED").length})
+          </button>
+          <button
             onClick={() => setActiveTab("resources")}
             className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
               activeTab === "resources"
@@ -508,6 +606,171 @@ export default function HospitalDashboard() {
             )}
           </div>
         </>
+      )}
+
+      {/* --- TAB: INCOMING REFERRALS (Prompt 07) --- */}
+      {activeTab === "referrals" && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="font-display text-xl font-bold text-navy-900">Incoming Emergency Referrals</h2>
+              <p className="text-xs text-navy-900/60">
+                Multi-hospital broadcast inbox, clinical handover evaluation, and explicit resource-backed acceptance.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-navy-900/60 font-medium">Filter:</span>
+              <select
+                value={referralFilter}
+                onChange={(e) => setReferralFilter(e.target.value)}
+                className="rounded border border-navy-900/20 p-1.5 text-xs bg-white text-navy-900"
+              >
+                <option value="ALL">All Referrals ({incomingReferrals.length})</option>
+                <option value="PENDING">Pending Action (Sent / Reviewing)</option>
+                <option value="CLARIFICATION_REQUIRED">Clarification Required</option>
+                <option value="ACCEPTED">Accepted ({incomingReferrals.filter(r => r.status === "ACCEPTED").length})</option>
+                <option value="DECLINED">Declined ({incomingReferrals.filter(r => r.status === "DECLINED").length})</option>
+              </select>
+              <button onClick={loadIncomingReferrals} className="btn-secondary text-xs">
+                🔄 Refresh
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-teal-50 p-3.5 text-xs text-teal-900 border border-teal-200">
+            <strong>Referral Coordination Policy:</strong> Recommending a hospital does not commit it.
+            Acceptance is explicit and authenticated, and atomically validates and reserves verified operational capacity.
+          </div>
+
+          {/* Referral Cards Grid */}
+          <div className="space-y-4">
+            {incomingReferrals.map((r) => {
+              const p = r.patient_summary;
+              const prio = priorityLabel(r.priority || 3);
+              return (
+                <div key={r.id} className="card p-5 border border-navy-900/10 hover:border-teal-600/40 transition">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-navy-900/10 pb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm font-bold text-navy-900">{r.request_reference}</span>
+                        <span className={`pill ${prio.className}`}>{prio.label}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                          r.status === "ACCEPTED" ? "bg-emerald-100 text-emerald-800" :
+                          r.status === "DECLINED" ? "bg-rose-100 text-rose-800" :
+                          r.status === "CLARIFICATION_REQUIRED" ? "bg-amber-100 text-amber-800" :
+                          "bg-sky-100 text-sky-800"
+                        }`}>
+                          {r.status}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-navy-900/60">
+                        Emergency Case #{r.emergency_case_id} · Round {r.request_round} · Dispatched {timeAgo(r.requested_at)}
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-xs text-navy-900/50">Requested Resource</span>
+                      <p className="text-sm font-bold text-teal-800">{r.requested_resource_type?.replace(/_/g, " ") || "ICU BED"}</p>
+                      {r.response_deadline && (
+                        <p className="text-[10px] text-navy-900/40">
+                          Deadline: {new Date(r.response_deadline).toLocaleTimeString()}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Patient & Incident Brief */}
+                  {p && (
+                    <div className="my-3 grid gap-3 sm:grid-cols-3 rounded-lg bg-navy-900/[0.02] p-3 text-xs">
+                      <div>
+                        <span className="text-navy-900/50 block">Patient Context</span>
+                        <span className="font-semibold text-navy-900">{p.age ?? "—"}y · {p.gender ?? "—"} · Blood: {p.blood_group ?? "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-navy-900/50 block">Emergency Type</span>
+                        <span className="font-semibold text-navy-900">{TYPE_LABEL[p.emergency_type || ""] || p.emergency_type}</span>
+                      </div>
+                      <div>
+                        <span className="text-navy-900/50 block">Reported Symptoms</span>
+                        <span className="font-medium text-navy-900/80">{p.symptoms || "None reported"}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Clarification Notes */}
+                  {r.clarification_notes && (
+                    <div className="my-2 rounded bg-amber-50 p-2.5 text-xs text-amber-900 border border-amber-200">
+                      <strong>Clarification Exchange:</strong>
+                      <p className="mt-0.5 whitespace-pre-wrap">{r.clarification_notes}</p>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-navy-900/5">
+                    <button
+                      onClick={() => setSelectedReferral(r)}
+                      className="text-xs font-medium text-teal-700 hover:text-teal-900 hover:underline"
+                    >
+                      📜 View Handover Details & Audit Trail ({r.responses?.length || 0})
+                    </button>
+
+                    {(r.status === "SENT" || r.status === "REVIEWING" || r.status === "CLARIFICATION_REQUIRED") && (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => {
+                            setClarifyModalRef(r);
+                            setClarifyQuestion("");
+                          }}
+                          className="btn-secondary text-xs"
+                        >
+                          ❓ Clarify
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDeclineModalRef(r);
+                            setDeclineReason("NO_BEDS");
+                            setDeclineNotes("");
+                          }}
+                          className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 border border-rose-200"
+                        >
+                          ✕ Decline
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAcceptModalRef(r);
+                            setAcceptNotes("");
+                          }}
+                          className="btn-primary text-xs"
+                        >
+                          ✓ Accept & Reserve Bed
+                        </button>
+                      </div>
+                    )}
+
+                    {r.status === "ACCEPTED" && (
+                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
+                        ✓ Accepted & Capacity Reserved
+                      </span>
+                    )}
+
+                    {r.status === "DECLINED" && (
+                      <span className="text-xs font-medium text-rose-700 bg-rose-50 px-2.5 py-1 rounded border border-rose-200">
+                        Declined: {r.decline_reason_code || "Reason not specified"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {!incomingReferrals.length && !loadingReferrals && (
+              <div className="card p-8 text-center text-navy-900/50">
+                <p className="text-base font-semibold">No referrals found.</p>
+                <p className="text-xs mt-1">Incoming emergency referral requests directed to your hospital will appear here.</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* --- TAB 2: OPERATIONAL RESOURCES (Prompt 06) --- */}
@@ -1219,6 +1482,298 @@ export default function HospitalDashboard() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* --- Referral Decision Modals (Prompt 07) --- */}
+
+      {/* 1. Accept Referral Modal */}
+      {acceptModalRef && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/40 p-4 backdrop-blur-sm">
+          <div className="card w-full max-w-md p-6 shadow-xl">
+            <h3 className="font-display text-lg font-bold text-navy-900">Confirm Referral Acceptance</h3>
+            <p className="mt-1 text-xs text-navy-900/60">
+              Accepting will explicitly commit your hospital to receive this patient and atomically secure a confirmed reservation.
+            </p>
+
+            <div className="my-4 rounded-lg bg-teal-50 p-3 text-xs text-teal-900 border border-teal-200">
+              <p><strong>Referral:</strong> {acceptModalRef.request_reference}</p>
+              <p><strong>Resource to Reserve:</strong> {acceptModalRef.requested_resource_type?.replace(/_/g, " ") || "ICU BED"} (1 unit)</p>
+              <p><strong>Emergency Priority:</strong> P{acceptModalRef.priority || 3}</p>
+            </div>
+
+            {actionError && (
+              <div className="mb-3 rounded bg-rose-50 p-2 text-xs text-rose-700 border border-rose-200">
+                ⚠️ {actionError}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Handover / Admitting Notes (Optional)</label>
+                <textarea
+                  placeholder="e.g. Bed 4 prepared in Cardiac ICU, Dr. Rao on call..."
+                  value={acceptNotes}
+                  onChange={(e) => setAcceptNotes(e.target.value)}
+                  className="mt-1 w-full rounded border border-navy-900/20 p-2 text-xs"
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAcceptModalRef(null);
+                    setActionError(null);
+                  }}
+                  disabled={actionInProgress}
+                  className="btn-secondary text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAcceptReferral}
+                  disabled={actionInProgress}
+                  className="btn-primary text-xs"
+                >
+                  {actionInProgress ? "Securing Reservation..." : "Confirm Acceptance & Reserve"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Decline Referral Modal */}
+      {declineModalRef && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/40 p-4 backdrop-blur-sm">
+          <div className="card w-full max-w-md p-6 shadow-xl">
+            <h3 className="font-display text-lg font-bold text-navy-900">Decline Referral Request</h3>
+            <p className="mt-1 text-xs text-navy-900/60">
+              Structured reason codes are recorded in the audit trail to assist the emergency coordination network.
+            </p>
+
+            <div className="my-3 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Structured Reason</label>
+                <select
+                  value={declineReason}
+                  onChange={(e) => setDeclineReason(e.target.value)}
+                  className="mt-1 w-full rounded border border-navy-900/20 p-2 text-xs"
+                >
+                  <option value="NO_BEDS">No Beds / Usable Capacity Unavailable</option>
+                  <option value="NO_SPECIALIST">Required Specialist Unavailable</option>
+                  <option value="DIVERT">Emergency Divert Active</option>
+                  <option value="RESOURCE_UNAVAILABLE">Required Equipment / Diagnostic Offline</option>
+                  <option value="CLINICAL_REVIEW_DECLINED">Clinical Review Declined</option>
+                  <option value="OTHER">Other Operational Constraint</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Additional Remarks (Optional)</label>
+                <textarea
+                  placeholder="Details for coordinator..."
+                  value={declineNotes}
+                  onChange={(e) => setDeclineNotes(e.target.value)}
+                  className="mt-1 w-full rounded border border-navy-900/20 p-2 text-xs"
+                  rows={2}
+                />
+              </div>
+
+              {actionError && (
+                <div className="rounded bg-rose-50 p-2 text-xs text-rose-700 border border-rose-200">
+                  ⚠️ {actionError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeclineModalRef(null);
+                    setActionError(null);
+                  }}
+                  disabled={actionInProgress}
+                  className="btn-secondary text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeclineReferral}
+                  disabled={actionInProgress}
+                  className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+                >
+                  {actionInProgress ? "Submitting..." : "Submit Decline"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Clarification Modal */}
+      {clarifyModalRef && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/40 p-4 backdrop-blur-sm">
+          <div className="card w-full max-w-md p-6 shadow-xl">
+            <h3 className="font-display text-lg font-bold text-navy-900">Request Clinical Clarification</h3>
+            <p className="mt-1 text-xs text-navy-900/60">
+              Submit a direct question to the attending emergency coordinator or doctor regarding this patient.
+            </p>
+
+            <div className="my-3 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Your Question</label>
+                <textarea
+                  placeholder="e.g. Has patient received thrombolysis? What is current GCS score?..."
+                  value={clarifyQuestion}
+                  onChange={(e) => setClarifyQuestion(e.target.value)}
+                  className="mt-1 w-full rounded border border-navy-900/20 p-2 text-xs"
+                  rows={3}
+                />
+              </div>
+
+              {actionError && (
+                <div className="rounded bg-rose-50 p-2 text-xs text-rose-700 border border-rose-200">
+                  ⚠️ {actionError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClarifyModalRef(null);
+                    setActionError(null);
+                  }}
+                  disabled={actionInProgress}
+                  className="btn-secondary text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRequestClarification}
+                  disabled={actionInProgress || !clarifyQuestion.trim()}
+                  className="btn-primary text-xs"
+                >
+                  {actionInProgress ? "Submitting..." : "Submit Question"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. Referral Handover Detail & History Modal */}
+      {selectedReferral && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/40 p-4 backdrop-blur-sm">
+          <div className="card w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 shadow-xl">
+            <div className="flex items-center justify-between border-b border-navy-900/10 pb-3">
+              <div>
+                <h3 className="font-display text-lg font-bold text-navy-900">
+                  Referral Handover #{selectedReferral.request_reference}
+                </h3>
+                <p className="text-xs text-navy-900/60">
+                  Case #{selectedReferral.emergency_case_id} · Dispatched {timeAgo(selectedReferral.requested_at)}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedReferral(null)}
+                className="rounded p-1 text-navy-900/50 hover:bg-navy-900/5"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="my-4 space-y-4 text-xs">
+              {/* Patient Handover Data */}
+              {selectedReferral.patient_summary && (
+                <div className="rounded-lg bg-navy-900/[0.03] p-3.5">
+                  <h4 className="font-bold text-navy-900 uppercase tracking-wider text-[11px] mb-2">
+                    Patient Clinical Context
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div>
+                      <span className="text-navy-900/50 block">Age / Gender</span>
+                      <span className="font-semibold text-navy-900">{selectedReferral.patient_summary.age ?? "—"}y / {selectedReferral.patient_summary.gender ?? "—"}</span>
+                    </div>
+                    <div>
+                      <span className="text-navy-900/50 block">Blood Group</span>
+                      <span className="font-semibold text-navy-900">{selectedReferral.patient_summary.blood_group ?? "—"}</span>
+                    </div>
+                    <div>
+                      <span className="text-navy-900/50 block">Emergency Type</span>
+                      <span className="font-semibold text-navy-900">{selectedReferral.patient_summary.emergency_type ?? "—"}</span>
+                    </div>
+                    <div>
+                      <span className="text-navy-900/50 block">Specialty</span>
+                      <span className="font-semibold text-navy-900">{selectedReferral.patient_summary.specialty ?? "—"}</span>
+                    </div>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-navy-900/10">
+                    <span className="text-navy-900/50 block">Symptoms</span>
+                    <p className="font-medium text-navy-900">{selectedReferral.patient_summary.symptoms || "None"}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Verified Clinical Facts Provenance */}
+              {selectedReferral.patient_summary?.clinical_facts && selectedReferral.patient_summary.clinical_facts.length > 0 && (
+                <div className="rounded-lg bg-teal-50/50 p-3.5 border border-teal-200">
+                  <h4 className="font-bold text-teal-900 uppercase tracking-wider text-[11px] mb-2">
+                    Verified Structured Facts & Provenance
+                  </h4>
+                  <div className="space-y-1.5">
+                    {selectedReferral.patient_summary.clinical_facts.map((f, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-teal-100 last:border-0">
+                        <span className="font-semibold text-navy-900">{f.fact_type}: {f.fact_value}</span>
+                        <span className="text-[10px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded font-mono">
+                          {f.provenance_sources.join(", ")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Response Event Audit Trail */}
+              <div>
+                <h4 className="font-bold text-navy-900 uppercase tracking-wider text-[11px] mb-2">
+                  Referral Audit Trail & Decision History
+                </h4>
+                <div className="space-y-2">
+                  {selectedReferral.responses?.map((resp) => (
+                    <div key={resp.id} className="rounded border border-navy-900/10 p-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-navy-900 uppercase text-[11px]">{resp.response_type}</span>
+                        <span className="text-navy-900/40 text-[10px]">{timeAgo(resp.responded_at || resp.created_at)}</span>
+                      </div>
+                      <p className="text-navy-900/80 mt-1">{resp.response_notes || resp.reason_code}</p>
+                      {resp.responding_user_name && (
+                        <p className="text-[10px] text-navy-900/40 mt-0.5">By: {resp.responding_user_name}</p>
+                      )}
+                    </div>
+                  ))}
+                  {(!selectedReferral.responses || selectedReferral.responses.length === 0) && (
+                    <p className="text-navy-900/40">No response events logged.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-navy-900/10">
+              <button
+                onClick={() => setSelectedReferral(null)}
+                className="btn-secondary text-xs"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

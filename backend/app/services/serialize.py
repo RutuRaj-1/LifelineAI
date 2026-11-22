@@ -13,6 +13,8 @@ from ..models import (
     MedicalReport,
     Patient,
     PatientClinicalFact,
+    ReferralRequest,
+    ReferralResponse,
     ResourceReservation,
     ResourceStatusHistory,
 )
@@ -297,4 +299,77 @@ def case_dict(c: EmergencyCase, role: str, detail: bool = False) -> dict:
         out["checklist"] = c.checklist or []
         if detail:
             out["ai_summary"] = c.ai_summary
+    return out
+
+
+def referral_response_dict(resp: ReferralResponse) -> dict:
+    return {
+        "id": resp.id,
+        "referral_request_id": resp.referral_request_id,
+        "responding_user_id": resp.responding_user_id,
+        "responding_user_name": resp.responding_user.full_name if resp.responding_user else None,
+        "response_type": resp.response_type,
+        "response_notes": resp.response_notes,
+        "reason_code": resp.reason_code,
+        "responded_at": resp.responded_at.isoformat() if resp.responded_at else None,
+        "created_at": resp.created_at.isoformat() if resp.created_at else None,
+    }
+
+
+def referral_request_dict(r: ReferralRequest, role: str = "hospital", detail: bool = False) -> dict:
+    case = r.emergency_case
+    hosp = r.hospital
+    patient = case.patient if case else None
+
+    out = {
+        "id": r.id,
+        "emergency_case_id": r.emergency_case_id,
+        "hospital_id": r.hospital_id,
+        "hospital_name": hosp.name if hosp else None,
+        "hospital_city": hosp.city if hosp else None,
+        "hospital_phone": hosp.phone if hosp else None,
+        "request_reference": r.request_reference,
+        "request_round": r.request_round,
+        "status": r.status,
+        "requested_resource_type": r.requested_resource_type,
+        "priority": r.priority,
+        "notes": r.notes,
+        "requested_at": r.requested_at.isoformat() if r.requested_at else None,
+        "response_deadline": r.response_deadline.isoformat() if r.response_deadline else None,
+        "responded_at": r.responded_at.isoformat() if r.responded_at else None,
+        "is_active_acceptance": r.is_active_acceptance,
+        "decline_reason_code": r.decline_reason_code,
+        "clarification_notes": r.clarification_notes,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        "responses": [referral_response_dict(resp) for resp in (r.responses or [])],
+    }
+
+    # Data minimization: provide only necessary clinical context for receiving hospital or coordinator
+    if patient:
+        patient_summary = {
+            "age": age_of(patient.dob),
+            "gender": patient.gender,
+            "blood_group": patient.blood_group,
+            "emergency_type": case.emergency_type if case else None,
+            "priority": case.priority if case else None,
+            "symptoms": case.symptoms if case else None,
+            "specialty": case.specialty if case else None,
+        }
+
+        # Include structured verified facts if detail requested
+        if detail and hasattr(patient, "clinical_facts") and patient.clinical_facts:
+            facts = []
+            for f in patient.clinical_facts:
+                if f.clinical_status == "ACTIVE":
+                    provenance_sources = [p.source_type for p in f.provenance_records]
+                    facts.append({
+                        "fact_type": f.fact_type,
+                        "fact_value": f.fact_value,
+                        "provenance_sources": provenance_sources,
+                    })
+            patient_summary["clinical_facts"] = facts
+
+        out["patient_summary"] = patient_summary
+
     return out

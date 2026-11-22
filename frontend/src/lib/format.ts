@@ -10,7 +10,8 @@ export const TYPE_LABEL: Record<string, string> = {
   stroke: "Stroke", cardiac: "Cardiac", trauma: "Trauma", diabetic: "Diabetic emergency", accident: "Accident", other: "Other",
 };
 
-export function timeAgo(iso: string): string {
+export function timeAgo(iso?: string | null): string {
+  if (!iso) return "just now";
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;

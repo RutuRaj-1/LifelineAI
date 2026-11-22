@@ -252,3 +252,144 @@ export interface ResourceHistoryResponse {
   offset: number;
   items: ResourceStatusHistory[];
 }
+
+
+// --- Prompt 07 Multi-Hospital Referral Interfaces & Endpoints ---
+
+export interface ReferralResponseItem {
+  id: number;
+  referral_request_id: number;
+  responding_user_id?: number | null;
+  responding_user_name?: string | null;
+  response_type: "DISPATCHED" | "ACCEPT" | "DECLINE" | "REQUEST_CLARIFICATION" | "CLARIFICATION_PROVIDED" | "CANCEL" | "EXPIRED" | string;
+  response_notes?: string | null;
+  reason_code?: string | null;
+  responded_at?: string | null;
+  created_at?: string | null;
+}
+
+export interface ReferralPatientSummary {
+  age?: number | null;
+  gender?: string | null;
+  blood_group?: string | null;
+  emergency_type?: string | null;
+  priority?: number | null;
+  symptoms?: string | null;
+  specialty?: string | null;
+  clinical_facts?: Array<{
+    fact_type: string;
+    fact_value: string;
+    provenance_sources: string[];
+  }>;
+}
+
+export interface ReferralItem {
+  id: number;
+  emergency_case_id: number;
+  hospital_id: number;
+  hospital_name?: string | null;
+  hospital_city?: string | null;
+  hospital_phone?: string | null;
+  request_reference: string;
+  request_round: number;
+  status: "DRAFT" | "SENT" | "REVIEWING" | "CLARIFICATION_REQUIRED" | "ACCEPTED" | "DECLINED" | "CANCELLED" | "EXPIRED" | string;
+  requested_resource_type?: string | null;
+  priority?: number | null;
+  notes?: string | null;
+  requested_at?: string | null;
+  response_deadline?: string | null;
+  responded_at?: string | null;
+  is_active_acceptance: boolean;
+  decline_reason_code?: string | null;
+  clarification_notes?: string | null;
+  responses: ReferralResponseItem[];
+  patient_summary?: ReferralPatientSummary | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface IncomingReferralsResponse {
+  hospital_id: number;
+  total: number;
+  limit: number;
+  offset: number;
+  items: ReferralItem[];
+}
+
+export interface EligibleHospitalResourceSummary {
+  resource_type: string;
+  usable_capacity: number;
+  staffed_capacity?: number | null;
+  operational_status: string;
+  freshness_status: "FRESH" | "STALE" | "UNKNOWN" | "SUSPENDED";
+  is_confirmed_fresh: boolean;
+}
+
+export interface EligibleHospitalItem {
+  hospital_id: number;
+  hospital_name: string;
+  city?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  eligibility_status: string;
+  is_eligible: boolean;
+  reasons: string[];
+  verified_capabilities: string[];
+  resource_summary?: EligibleHospitalResourceSummary | null;
+  is_dispatched: boolean;
+  referral_request_id?: number | null;
+  current_referral_status?: string | null;
+}
+
+export interface ReferralEligibilityResponse {
+  emergency_case_id: number;
+  emergency_type: string;
+  specialty?: string | null;
+  requested_resource_type: string;
+  referral_round: number;
+  total_hospitals_evaluated: number;
+  eligible_hospitals: EligibleHospitalItem[];
+}
+
+export const referralApi = {
+  getEligibility: (emergencyId: number, requestedResourceType = "ICU_BED") =>
+    api.get<ReferralEligibilityResponse>(`/emergency/${emergencyId}/referral-eligibility?requested_resource_type=${encodeURIComponent(requestedResourceType)}`),
+
+  broadcast: (emergencyId: number, payload: {
+    hospital_ids: number[];
+    requested_resource_type?: string;
+    priority?: number;
+    notes?: string;
+    response_timeout_minutes?: number;
+    idempotency_key?: string;
+  }) => api.post<{ emergency_case_id: number; dispatched_count: number; referrals: ReferralItem[] }>(`/emergency/${emergencyId}/referrals`, payload),
+
+  getCaseReferrals: (emergencyId: number) =>
+    api.get<{ emergency_case_id: number; referral_round: number; total: number; referrals: ReferralItem[] }>(`/emergency/${emergencyId}/referrals`),
+
+  getIncoming: (statusFilter?: string, limit = 50, offset = 0) => {
+    const params = new URLSearchParams();
+    if (statusFilter) params.append("status_filter", statusFilter);
+    params.append("limit", String(limit));
+    params.append("offset", String(offset));
+    return api.get<IncomingReferralsResponse>(`/hospital/referrals/incoming?${params.toString()}`);
+  },
+
+  getDetail: (referralId: number) =>
+    api.get<ReferralItem>(`/hospital/referrals/${referralId}`),
+
+  accept: (referralId: number, notes?: string) =>
+    api.post<ReferralItem>(`/hospital/referrals/${referralId}/accept`, { notes }),
+
+  decline: (referralId: number, reason_code: string, notes?: string) =>
+    api.post<ReferralItem>(`/hospital/referrals/${referralId}/decline`, { reason_code, notes }),
+
+  requestClarification: (referralId: number, question: string) =>
+    api.post<ReferralItem>(`/hospital/referrals/${referralId}/clarification`, { question }),
+
+  respondClarification: (referralId: number, answer: string) =>
+    api.post<ReferralItem>(`/referrals/${referralId}/clarifications/respond`, { answer }),
+
+  cancel: (referralId: number, reason?: string) =>
+    api.post<ReferralItem>(`/referrals/${referralId}/cancel`, { reason }),
+};

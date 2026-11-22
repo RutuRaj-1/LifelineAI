@@ -17,6 +17,7 @@ from .routers import (
     hospital_registry,
     notifications,
     patient,
+    referrals,
     scenarios,
 )
 from .ws import router as ws_router
@@ -73,6 +74,7 @@ for r in (
     admin.router,
     ai_routes.router,
     notifications.router,
+    referrals.router,
     scenarios.router,
 ):
     app.include_router(r, prefix="/api")

@@ -61,6 +61,9 @@ def test_alembic_upgrade_and_downgrade_full_chain():
         cap_cols = {c["name"] for c in insp2.get_columns("hospital_capabilities")}
         assert "verification_notes" in cap_cols
         assert "verification_source" in cap_cols
+        ref_cols = {c["name"] for c in insp2.get_columns("referral_requests")}
+        assert "requested_resource_type" in ref_cols
+        assert "idempotency_key" in ref_cols
         engine2.dispose()
 
         # 3. Downgrade back to 001_initial_schema

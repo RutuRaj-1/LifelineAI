@@ -253,6 +253,10 @@ CREATE TABLE referral_requests (
     decline_reason_code VARCHAR(60),
     clarification_notes TEXT,
     is_active_acceptance BOOLEAN NOT NULL DEFAULT false,
+    requested_resource_type VARCHAR(40),
+    priority INTEGER,
+    notes TEXT,
+    idempotency_key VARCHAR(100) UNIQUE,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT uq_case_hosp_round UNIQUE (emergency_case_id, hospital_id, request_round)

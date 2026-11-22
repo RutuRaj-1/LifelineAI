@@ -352,6 +352,10 @@ class ReferralRequest(Base):
     decline_reason_code: Mapped[str | None] = mapped_column(String(60))  # NO_BEDS | NO_SPECIALIST | DIVERT | RESOURCE_UNAVAILABLE | OTHER
     clarification_notes: Mapped[str | None] = mapped_column(Text)
     is_active_acceptance: Mapped[bool] = mapped_column(Boolean, default=False)
+    requested_resource_type: Mapped[str | None] = mapped_column(String(40))
+    priority: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 

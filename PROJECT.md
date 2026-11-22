@@ -446,3 +446,50 @@ Key architectural implementations:
 - **Backend Tests:** **41/41 passed** (36 baseline + 5 new integration tests in `backend/tests/test_operational_resources.py` covering capacity formulas, freshness classification, staff attestation history, reservation lifecycle safety with zero double-counting, and cross-hospital RBAC isolation).
 - **Frontend Production Build:** `tsc -b && vite build` succeeded with 0 errors (production bundle: 270.77 kB in 1.27s).
 - **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
+
+---
+
+## 15. Prompt 07 Implementation — Multi-Hospital Referral Engine, Referral Broadcasting, Hospital Responses & Explicit Acceptance Coordination
+
+### 15.1 Architectural Invariants & Core Principles
+Prompt 07 implements the multi-hospital referral engine and explicit acceptance coordination subsystem under four foundational axioms:
+1. **"A hospital appearing in a recommendation list does NOT mean it has accepted a patient."**
+2. **"A resource appearing available does NOT mean the hospital has committed that resource."**
+3. **"A referral is accepted ONLY when an authorized receiving-hospital user explicitly accepts it AND the corresponding reservation is successfully secured."**
+4. **"At most one referral may be in an ACCEPTED state for an emergency case at any time"** (Single Active Acceptance Invariant).
+
+### 15.2 Key Subsystems & Implementations
+- **Referral Eligibility Discovery (`backend/app/services/referral_service.py:get_eligible_hospitals`):**
+  - Evaluates candidate hospitals based on institution verification status (`ACTIVE`, `VERIFIED`), active department hierarchy, and verified capabilities matching clinical urgency (e.g., Trauma Bay, Stroke Protocol, Cardiac Cath Lab).
+  - Integrates operational resource intelligence: verifies fresh attestation (`is_confirmed_fresh`) and non-zero usable capacity ($\text{usable\_capacity} > 0$).
+  - Prevents auto-routing: marks hospitals as `ELIGIBLE` or `INELIGIBLE` with structured explanatory codes without executing implicit dispatches.
+- **Controlled Multi-Hospital Fan-Out / Broadcasting (`broadcast_referrals`):**
+  - Coordinators/doctors can broadcast referrals to multiple eligible hospitals in parallel.
+  - Every referral request is created with an independent `request_reference`, status `SENT`, round tracking, priority, and response deadline.
+  - Idempotency is enforced via `idempotency_key` (String(100), unique index) preventing duplicate dispatches from retries or concurrent clicks.
+- **Hospital Inbox Isolation & State Transitions:**
+  - Dedicated inbox endpoint (`GET /api/hospital/referrals/incoming`) strictly isolates referrals directed to the authenticated user's hospital institution.
+  - Reading referral details auto-transitions status from `SENT` to `REVIEWING`.
+- **Two-Way Clarification Audit Trail:**
+  - Hospitals can post clarification questions (`POST /api/hospital/referrals/{id}/clarification`), transitioning status to `CLARIFICATION_REQUIRED`.
+  - Referring coordinators/doctors answer inquiries (`POST /api/referrals/{id}/clarifications/respond`), reverting status to `REVIEWING`.
+  - All communication is appended to an immutable, provenanced event audit trail (`referral_responses`).
+- **Structured Decline Workflow:**
+  - Receiving facilities decline requests (`POST /api/hospital/referrals/{id}/decline`) with standardized reason codes (`NO_BEDS`, `NO_SPECIALIST`, `DIVERT`, `RESOURCE_UNAVAILABLE`, `CLINICAL_REVIEW_DECLINED`, `OTHER`).
+  - Referral status transitions to `DECLINED` while leaving any other concurrent hospital referrals active.
+- **Explicit Acceptance & Reservation Locking:**
+  - When an authorized hospital accepts a referral (`POST /api/hospital/referrals/{id}/accept`), the referral service re-evaluates capacity freshness and usable counts.
+  - Atomically creates and confirms a `ResourceReservation` via `resource_service`.
+  - Updates referral status to `ACCEPTED` and assigns `hospital_id` on the emergency case.
+  - **Single Active Acceptance Invariant:** Protected both at application level and database constraint level via `uq_case_single_active_accepted` (`CREATE UNIQUE INDEX uq_case_single_active_accepted ON referral_requests(emergency_case_id) WHERE status = 'ACCEPTED'`). Subsequent acceptance attempts on other referrals for the same case are strictly rejected.
+- **Safe Cancellation & Reservation Release:**
+  - If a referral is cancelled (`POST /api/referrals/{id}/cancel`), any held or confirmed reservation is safely released, returning capacity to the pool.
+- **Frontend Hospital Referral Center (`HospitalDashboard.tsx`):**
+  - Live "Incoming Referrals" tab with real-time status badges (`SENT`, `REVIEWING`, `CLARIFICATION_REQUIRED`, `ACCEPTED`, `DECLINED`, `EXPIRED`, `CANCELLED`).
+  - Multi-action controls: Accept Modal with reservation preview, Decline Modal with structured reason codes, Clarification Modal with communication history, and Handover Modal presenting patient summary, verified clinical facts provenance, and audit timeline.
+
+### 15.3 Automated Verification Matrix
+- **Backend Tests:** **48/48 passed** (41 baseline + 7 new integration tests in `backend/tests/test_referral_engine.py` covering eligibility discovery, fan-out broadcasting idempotency, hospital inbox isolation, two-way clarification roundtrips, explicit acceptance with single-accepted invariant enforcement, structured decline workflow, and cancellation reservation release).
+- **Alembic Migration Verification:** Full migration chain `001 -> 002 -> 003 -> 004 -> 001 -> base -> head` verified in `backend/tests/test_migrations.py`.
+- **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 288.51 kB in 1.24s).
+- **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
