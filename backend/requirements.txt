@@ -3,6 +3,7 @@ uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
 sqlalchemy>=2.0.30
+alembic>=1.13.0
 # psycopg2-binary is only required when connecting to PostgreSQL; SQLite is used by default for local development.
 psycopg2-binary>=2.9.10; sys_platform != 'win32'
 PyJWT>=2.8.0
