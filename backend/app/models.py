@@ -348,6 +348,20 @@ class EmergencyCase(Base):
         post_update=True,
     )
 
+    # Prompt 10 Post-Emergency Continuity Relationships
+    outcomes: Mapped[list["EmergencyOutcome"]] = relationship(
+        back_populates="emergency_case", cascade="all, delete-orphan", foreign_keys="EmergencyOutcome.emergency_case_id"
+    )
+    discharge_summaries: Mapped[list["DischargeSummary"]] = relationship(
+        back_populates="emergency_case", cascade="all, delete-orphan", foreign_keys="DischargeSummary.emergency_case_id"
+    )
+    medication_reconciliations: Mapped[list["MedicationReconciliation"]] = relationship(
+        back_populates="emergency_case", cascade="all, delete-orphan", foreign_keys="MedicationReconciliation.emergency_case_id"
+    )
+    follow_up_plans: Mapped[list["FollowUpPlan"]] = relationship(
+        back_populates="emergency_case", cascade="all, delete-orphan", foreign_keys="FollowUpPlan.emergency_case_id"
+    )
+
 
 class ReferralRequest(Base):
     __tablename__ = "referral_requests"
@@ -527,3 +541,137 @@ class ActivityLog(Base):
     detail: Mapped[str] = mapped_column(Text)
     actor: Mapped[str] = mapped_column(String(60), default="system")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+# ==============================================================================
+# Prompt 10: Post-Emergency Continuity, Outcomes, Discharges & Longitudinal Follow-Up
+# ==============================================================================
+
+class EmergencyOutcome(Base):
+    __tablename__ = "emergency_outcomes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emergency_case_id: Mapped[int] = mapped_column(ForeignKey("emergency_cases.id", ondelete="CASCADE"), index=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), index=True)
+    hospital_id: Mapped[int] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), index=True)
+    disposition: Mapped[str] = mapped_column(String(40), index=True)  # DISCHARGED | ADMITTED | TRANSFERRED | OBSERVATION | DECEASED | LEFT_AGAINST_ADVICE | OTHER
+    disposition_notes: Mapped[str | None] = mapped_column(Text)
+    outcome_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    verification_status: Mapped[str] = mapped_column(String(30), default="UNVERIFIED", index=True)  # UNVERIFIED | REVIEWED | CLINICIAN_VERIFIED | AMENDED | SUPERSEDED
+    recorded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    verified_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    parent_outcome_id: Mapped[int | None] = mapped_column(ForeignKey("emergency_outcomes.id", ondelete="SET NULL"), index=True)
+    amendment_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+    emergency_case: Mapped["EmergencyCase"] = relationship(back_populates="outcomes")
+    patient: Mapped["Patient"] = relationship()
+    hospital: Mapped["Hospital"] = relationship()
+    recorded_by: Mapped["User | None"] = relationship(foreign_keys=[recorded_by_user_id])
+    verified_by: Mapped["User | None"] = relationship(foreign_keys=[verified_by_user_id])
+    parent_outcome: Mapped["EmergencyOutcome | None"] = relationship(remote_side=[id])
+
+
+class DischargeSummary(Base):
+    __tablename__ = "discharge_summaries"
+    __table_args__ = (
+        UniqueConstraint("emergency_case_id", "version", name="uq_case_discharge_version"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emergency_case_id: Mapped[int] = mapped_column(ForeignKey("emergency_cases.id", ondelete="CASCADE"), index=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), index=True)
+    hospital_id: Mapped[int] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), index=True)
+    source_report_id: Mapped[int | None] = mapped_column(ForeignKey("medical_reports.id", ondelete="SET NULL"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(30), default="DRAFT", index=True)  # DRAFT | PENDING_REVIEW | APPROVED | REJECTED | SUPERSEDED | AMENDED
+    admission_date: Mapped[str | None] = mapped_column(String(30))
+    discharge_date: Mapped[str | None] = mapped_column(String(30))
+    primary_diagnosis: Mapped[str | None] = mapped_column(String(255))
+    secondary_diagnoses: Mapped[list | None] = mapped_column(JSON, default=list)
+    procedures_performed: Mapped[list | None] = mapped_column(JSON, default=list)
+    clinical_course: Mapped[str | None] = mapped_column(Text)
+    discharge_condition: Mapped[str | None] = mapped_column(String(80))  # STABLE | AMBULATORY | CRITICAL | TRANSFERRED | IMPROVED
+    precautions: Mapped[list | None] = mapped_column(JSON, default=list)
+    summary_data: Mapped[dict] = mapped_column(JSON)
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_notes: Mapped[str | None] = mapped_column(Text)
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    amendment_reason: Mapped[str | None] = mapped_column(Text)
+    parent_summary_id: Mapped[int | None] = mapped_column(ForeignKey("discharge_summaries.id", ondelete="SET NULL"), index=True)
+    is_current_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+    emergency_case: Mapped["EmergencyCase"] = relationship(back_populates="discharge_summaries")
+    patient: Mapped["Patient"] = relationship()
+    hospital: Mapped["Hospital"] = relationship()
+    source_report: Mapped["MedicalReport | None"] = relationship()
+    author_user: Mapped["User | None"] = relationship(foreign_keys=[author_user_id])
+    approved_by: Mapped["User | None"] = relationship(foreign_keys=[approved_by_user_id])
+    parent_summary: Mapped["DischargeSummary | None"] = relationship(remote_side=[id])
+
+
+class MedicationReconciliation(Base):
+    __tablename__ = "medication_reconciliations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emergency_case_id: Mapped[int] = mapped_column(ForeignKey("emergency_cases.id", ondelete="CASCADE"), index=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), index=True)
+    hospital_id: Mapped[int] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), index=True)
+    discharge_summary_id: Mapped[int | None] = mapped_column(ForeignKey("discharge_summaries.id", ondelete="SET NULL"), index=True)
+    medication_name: Mapped[str] = mapped_column(String(160))
+    dosage: Mapped[str | None] = mapped_column(String(80))
+    route: Mapped[str | None] = mapped_column(String(40))  # ORAL | IV | IM | SUBCUTANEOUS | INHALATION | TOPICAL | OTHER
+    frequency: Mapped[str | None] = mapped_column(String(80))  # ONCE_DAILY | TWICE_DAILY | THRICE_DAILY | AS_NEEDED | CONTINUOUS
+    reconciliation_status: Mapped[str] = mapped_column(String(30))  # CONTINUE | START | STOP | CHANGE | NOT_RECONCILED
+    source_type: Mapped[str] = mapped_column(String(40))  # PATIENT_REPORTED | HISTORICAL_RECORD | DISCHARGE_ORDER | CLINICIAN_ENTERED | OCR_EXTRACTED
+    clinical_reason: Mapped[str | None] = mapped_column(Text)
+    verification_status: Mapped[str] = mapped_column(String(30), default="UNVERIFIED")  # UNVERIFIED | REVIEWED | CLINICIAN_VERIFIED | REJECTED
+    verified_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    promoted_fact_id: Mapped[int | None] = mapped_column(ForeignKey("patient_clinical_facts.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+    emergency_case: Mapped["EmergencyCase"] = relationship(back_populates="medication_reconciliations")
+    patient: Mapped["Patient"] = relationship()
+    hospital: Mapped["Hospital"] = relationship()
+    discharge_summary: Mapped["DischargeSummary | None"] = relationship()
+    verified_by: Mapped["User | None"] = relationship(foreign_keys=[verified_by_user_id])
+    promoted_fact: Mapped["PatientClinicalFact | None"] = relationship()
+
+
+class FollowUpPlan(Base):
+    __tablename__ = "follow_up_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emergency_case_id: Mapped[int] = mapped_column(ForeignKey("emergency_cases.id", ondelete="CASCADE"), index=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), index=True)
+    hospital_id: Mapped[int] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), index=True)
+    discharge_summary_id: Mapped[int | None] = mapped_column(ForeignKey("discharge_summaries.id", ondelete="SET NULL"), index=True)
+    department_id: Mapped[int | None] = mapped_column(ForeignKey("hospital_departments.id", ondelete="SET NULL"), index=True)
+    specialty: Mapped[str] = mapped_column(String(80))
+    scheduled_date: Mapped[str | None] = mapped_column(String(40))
+    instructions: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="PLANNED", index=True)  # PLANNED | SCHEDULED | COMPLETED | CANCELLED | MISSED | RESCHEDULED
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    verified_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completion_notes: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+    emergency_case: Mapped["EmergencyCase"] = relationship(back_populates="follow_up_plans")
+    patient: Mapped["Patient"] = relationship()
+    hospital: Mapped["Hospital"] = relationship()
+    department: Mapped["HospitalDepartment | None"] = relationship()
+    discharge_summary: Mapped["DischargeSummary | None"] = relationship()
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
+    verified_by: Mapped["User | None"] = relationship(foreign_keys=[verified_by_user_id])

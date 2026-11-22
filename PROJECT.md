@@ -586,3 +586,56 @@ Prompt 07 implements the multi-hospital referral engine and explicit acceptance 
 - **Backend Tests:** **56/56 passed** (all domain, security, config, db lifecycle, hospital registry, operational resources, patient intelligence, referral engine, and emergency orchestration tests passing).
 - **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 332.49 kB in 1.30s).
 - **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
+
+---
+
+## 18. Prompt 10 Implementation — Post-Emergency Continuity, Clinical Outcome Recording, Discharge Synthesis, Medication Reconciliation & Longitudinal Follow-Up
+
+### 18.1 Architecture & Core Clinical Continuity Principles
+- **Move Information Before the Patient, Not After:** Extends pre-emergency intelligence seamlessly into post-emergency disposition, discharge synthesis, and longitudinal health preservation.
+- **Strict Distinction of Clinical & Operational Outcomes:**
+  - `HANDOVER_COMPLETED` vs Hospital Admission vs Outpatient Discharge vs Facility Transfer. Emergency closure does not imply patient discharge from the hospital; inpatient stays are explicitly tracked.
+  - Disposition Types: `DISCHARGED` (released to home/outpatient), `ADMITTED` (inpatient admission with department/ward tracking), `TRANSFERRED` (transferred to a tertiary/specialized institution with destination facility logging), `OTHER`.
+- **Evidence-Grounded Non-Diagnostic Discharge Summaries:**
+  - AI synthesizes documented clinical findings, observations, and treatments without autonomous prescribing or autonomous medical diagnosing.
+  - Strict Attending Physician Approval Gate (`DRAFT` -> `PENDING_PHYSICIAN_APPROVAL` -> `APPROVED` / `REJECTED`).
+  - Mandatory clinical governance disclaimer prominently rendered on all summaries.
+  - Tracks missing data warnings and links evidence citations to source reports and field records.
+- **Medication Reconciliation & Longitudinal Promotion:**
+  - Structured reconciliation actions: `CONTINUE` (verified home medication), `START` (new medication initiated), `STOP` (discontinued medication), `CHANGE` (modified dosage or frequency).
+  - Clinician verification gate: approved items automatically promote to (or deactivate from) `PatientClinicalFact` records with full provenance tracking.
+- **Longitudinal Follow-Up Care Plans:**
+  - Multi-specialty structured follow-up items with timeframes, instructions, and target dates (`PLANNED` -> `SCHEDULED` -> `COMPLETED` / `CANCELLED`).
+  - Patient empowerment: patients can view follow-ups and record confirmed appointment dates directly in the portal.
+- **Longitudinal Health Timeline Integration:**
+  - Approved discharge summaries (`DISCHARGE_SUMMARY`), verified medication reconciliations (`MEDICATION_RECONCILED`), and follow-up plans (`FOLLOW_UP_PLAN`) seamlessly stream into the patient's chronological timeline alongside medical reports and emergency incidents.
+- **Privacy-Protected Family View:**
+  - Family portal displays appropriate post-emergency outcomes (e.g. "Admitted to Ward 3B" or "Discharged Home") while strictly shielding internal clinician diagnostic notes and sensitive records.
+
+### 18.2 Schema & Database Migrations
+- **Alembic Migration `006_post_emergency_continuity_and_outcomes`:**
+  - `emergency_outcomes`: records disposition, department, destination facility, auditable versioning, and amendment justifications.
+  - `discharge_summaries`: stores primary/secondary diagnoses, treatment summaries, clinical course, discharge condition, precautions, non-diagnostic disclaimer, versioning, and physician approval timestamps.
+  - `medication_reconciliations`: tracks medication details, actions (`CONTINUE`, `START`, `STOP`, `CHANGE`), clinician verification status, and linked `PatientClinicalFact` promotion IDs.
+  - `follow_up_plans`: stores specialty, instructions, timeframe, scheduled date, and completion audit trails.
+
+### 18.3 Role-Specific Workspaces & Endpoints
+- **Attending Doctor Workspace (`frontend/src/pages/DoctorDashboard.tsx`):**
+  - Dedicated "Post-Emergency & Continuity" workspace tab.
+  - Outcome recording & auditable amendment form.
+  - Discharge Summary review & physician approval/rejection gate with modal justification.
+  - Medication reconciliation management table with inline Verify/Reject controls and promotion notices.
+  - Structured follow-up plan creation tool.
+- **Hospital Command Center (`frontend/src/pages/HospitalDashboard.tsx`):**
+  - Queue detail integration: Record/Amend Emergency Outcome (`DISCHARGED`, `ADMITTED`, `TRANSFERRED`).
+  - Upload Official Discharge Document with integrated OCR text extraction and automated draft synthesis.
+- **Patient Workspace (`frontend/src/pages/PatientHome.tsx`):**
+  - "Care Continuity & Records" tab presenting past emergency encounters, approved discharge summaries with precautions, current reconciled medications, and follow-up care scheduling.
+- **Family Portal (`frontend/src/pages/FamilyPortal.tsx`):**
+  - Real-time privacy-protected Care Continuity status banner displaying disposition and hospital destination.
+
+### 18.4 Automated Verification Matrix
+- **Backend Tests:** **62/62 passed** (56 baseline + 6 comprehensive tests in `backend/tests/test_post_emergency.py` covering outcome recording/amendment, discharge document OCR ingestion, discharge summary generation & physician approval gate, medication reconciliation & fact promotion, follow-up plan lifecycle, and longitudinal timeline integration).
+- **Alembic Migration Chain:** Verified reversible upgrade/downgrade across full chain `001 -> ... -> 006 -> 001 -> base -> head` with zero errors.
+- **Frontend Production Build:** `tsc -b && vite build` succeeded in 1.39s with zero TypeScript or build errors.
+- **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.

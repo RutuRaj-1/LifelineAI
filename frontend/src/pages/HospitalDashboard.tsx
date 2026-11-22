@@ -14,6 +14,9 @@ import {
   ReferralResponseItem,
   ResourceHistoryResponse,
   ResourceStatusHistory,
+  postEmergencyApi,
+  EmergencyOutcome,
+  DischargeSummary,
 } from "../lib/api";
 import { useEmergencyEvents } from "../lib/ws";
 import { TYPE_LABEL, priorityLabel, timeAgo } from "../lib/format";
@@ -91,6 +94,23 @@ export default function HospitalDashboard() {
   const [handoverDetail, setHandoverDetail] = useState<ClinicalHandoverItem | null>(null);
   const [handoverAckRemarks, setHandoverAckRemarks] = useState<string>("");
   const [acknowledging, setAcknowledging] = useState<boolean>(false);
+
+  // Post-Emergency Continuity State (Prompt 10)
+  const [selectedOutcome, setSelectedOutcome] = useState<EmergencyOutcome | null>(null);
+  const [selectedDischarge, setSelectedDischarge] = useState<DischargeSummary | null>(null);
+  const [outcomeModalOpen, setOutcomeModalOpen] = useState(false);
+  const [hospOutcomeDisposition, setHospOutcomeDisposition] = useState("DISCHARGED");
+  const [hospOutcomeNotes, setHospOutcomeNotes] = useState("");
+  const [hospOutcomeDept, setHospOutcomeDept] = useState("");
+  const [hospOutcomeFacility, setHospOutcomeFacility] = useState("");
+  const [hospAmendmentReason, setHospAmendmentReason] = useState("");
+  const [savingHospOutcome, setSavingHospOutcome] = useState(false);
+
+  const [uploadDocModalOpen, setUploadDocModalOpen] = useState(false);
+  const [uploadDocFile, setUploadDocFile] = useState<File | null>(null);
+  const [uploadDocTitle, setUploadDocTitle] = useState("Hospital Discharge Summary Record");
+  const [uploadDocType, setUploadDocType] = useState("Discharge Summary");
+  const [uploadingDoc, setUploadingDoc] = useState(false);
 
   // Department creation form state
   const [deptForm, setDeptForm] = useState({
@@ -357,6 +377,82 @@ export default function HospitalDashboard() {
       setTimeout(() => setRegistryMessage(null), 3500);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Failed to submit capability");
+    }
+  }
+
+  useEffect(() => {
+    if (!selected) {
+      setSelectedOutcome(null);
+      setSelectedDischarge(null);
+      return;
+    }
+    postEmergencyApi.getOutcome(selected.id)
+      .then((o) => {
+        setSelectedOutcome(o);
+        if (o) {
+          setHospOutcomeDisposition(o.disposition);
+          setHospOutcomeNotes(o.disposition_notes);
+          setHospOutcomeDept(o.admitted_department || "");
+          setHospOutcomeFacility(o.transferred_to_facility || "");
+        }
+      })
+      .catch(() => setSelectedOutcome(null));
+    postEmergencyApi.getDischargeSummary(selected.id)
+      .then(setSelectedDischarge)
+      .catch(() => setSelectedDischarge(null));
+  }, [selected?.id]);
+
+  async function handleSaveHospOutcome() {
+    if (!selected || !hospOutcomeNotes.trim()) return;
+    setSavingHospOutcome(true);
+    try {
+      if (selectedOutcome) {
+        const updated = await postEmergencyApi.amendOutcome(selected.id, {
+          disposition: hospOutcomeDisposition,
+          disposition_notes: hospOutcomeNotes.trim(),
+          amendment_reason: hospAmendmentReason.trim() || "Hospital records disposition update",
+          admitted_department: hospOutcomeDept.trim() || undefined,
+          transferred_to_facility: hospOutcomeFacility.trim() || undefined,
+        });
+        setSelectedOutcome(updated);
+      } else {
+        const created = await postEmergencyApi.recordOutcome(selected.id, {
+          disposition: hospOutcomeDisposition,
+          disposition_notes: hospOutcomeNotes.trim(),
+          admitted_department: hospOutcomeDept.trim() || undefined,
+          transferred_to_facility: hospOutcomeFacility.trim() || undefined,
+        });
+        setSelectedOutcome(created);
+      }
+      setOutcomeModalOpen(false);
+      refreshQueue();
+    } catch (err: any) {
+      alert(err.message || "Failed to record outcome");
+    } finally {
+      setSavingHospOutcome(false);
+    }
+  }
+
+  async function handleUploadDischargeDoc(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selected || !uploadDocFile) return;
+    setUploadingDoc(true);
+    try {
+      const form = new FormData();
+      form.append("file", uploadDocFile);
+      form.append("title", uploadDocTitle.trim() || "Hospital Discharge Document");
+      form.append("document_type", uploadDocType.trim() || "Discharge Summary");
+      const res = await postEmergencyApi.uploadDischargeDocument(selected.id, form);
+      setUploadDocModalOpen(false);
+      setUploadDocFile(null);
+      // Reload discharge summary
+      const ds = await postEmergencyApi.getDischargeSummary(selected.id);
+      setSelectedDischarge(ds);
+      setRegistryMessage(`Discharge document uploaded and processed with OCR (${res.ocr_status}). Draft v${res.version} synthesized.`);
+    } catch (err: any) {
+      alert(err.message || "Failed to upload discharge document");
+    } finally {
+      setUploadingDoc(false);
     }
   }
 
@@ -628,6 +724,71 @@ export default function HospitalDashboard() {
                       📋 View & Acknowledge Handover
                     </button>
                   )}
+
+                  {/* Post-Emergency Care & Continuity Actions (Prompt 10) */}
+                  <div className="w-full pt-3 mt-2 border-t border-navy-900/10 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wide text-navy-900/70">
+                        Post-Emergency Care & Disposition
+                      </span>
+                      {selectedOutcome && (
+                        <span className={`pill text-[10px] font-bold ${
+                          selectedOutcome.disposition === "DISCHARGED"
+                            ? "bg-teal-100 text-teal-900"
+                            : selectedOutcome.disposition === "ADMITTED"
+                            ? "bg-indigo-100 text-indigo-900"
+                            : "bg-amber-100 text-amber-900"
+                        }`}>
+                          {selectedOutcome.disposition} (v{selectedOutcome.version})
+                        </span>
+                      )}
+                    </div>
+
+                    {selectedOutcome ? (
+                      <div className="rounded-lg bg-navy-900/[0.02] p-3 text-xs border border-navy-900/5 space-y-1">
+                        <p className="font-semibold text-navy-900">
+                          Disposition: {selectedOutcome.disposition}
+                          {selectedOutcome.admitted_department && ` · Dept: ${selectedOutcome.admitted_department}`}
+                          {selectedOutcome.transferred_to_facility && ` · Transferred to: ${selectedOutcome.transferred_to_facility}`}
+                        </p>
+                        <p className="text-navy-900/70">{selectedOutcome.disposition_notes}</p>
+                        <p className="text-[10px] text-navy-900/40">Recorded: {new Date(selectedOutcome.outcome_at).toLocaleString()}</p>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-navy-900/50 italic">
+                        No final outcome recorded yet. Distinguish inpatient admission, outpatient release, or transfer.
+                      </p>
+                    )}
+
+                    {selectedDischarge && (
+                      <div className="rounded-lg bg-teal-50/50 p-3 text-xs border border-teal-200/50 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-teal-900 text-[11px]">Discharge Summary (v{selectedDischarge.version})</span>
+                          <span className={`pill text-[10px] ${
+                            selectedDischarge.status === "APPROVED" ? "bg-teal-100 text-teal-900" : "bg-amber-100 text-amber-900"
+                          }`}>
+                            {selectedDischarge.status}
+                          </span>
+                        </div>
+                        <p className="text-navy-900/80 text-[11px]">{selectedDischarge.primary_diagnosis}</p>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        onClick={() => setOutcomeModalOpen(true)}
+                        className="rounded-lg bg-indigo-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-800 shadow-sm"
+                      >
+                        {selectedOutcome ? "📝 Amend Emergency Outcome" : "📋 Record Emergency Outcome"}
+                      </button>
+                      <button
+                        onClick={() => setUploadDocModalOpen(true)}
+                        className="rounded-lg bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 shadow-sm"
+                      >
+                        📄 Upload Discharge Document (OCR)
+                      </button>
+                    </div>
+                  </div>
 
                   {!selected.doctor && (
                     <div className="w-full mt-2">
@@ -1990,6 +2151,172 @@ export default function HospitalDashboard() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {/* Record / Amend Outcome Modal (Prompt 10) */}
+      {outcomeModalOpen && selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/50 p-4 backdrop-blur-sm">
+          <div className="card w-full max-w-lg p-6 space-y-4">
+            <h3 className="font-display text-base font-bold text-navy-900">
+              {selectedOutcome ? "Amend Emergency Outcome Disposition" : "Record Emergency Outcome Disposition"}
+            </h3>
+            <p className="text-xs text-navy-900/60">
+              Distinguishes outpatient discharge, continued inpatient admission, or specialized hospital transfer.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Disposition</label>
+                <select
+                  value={hospOutcomeDisposition}
+                  onChange={(e) => setHospOutcomeDisposition(e.target.value)}
+                  className="input text-xs w-full mt-1"
+                >
+                  <option value="DISCHARGED">DISCHARGED (Outpatient release from emergency)</option>
+                  <option value="ADMITTED">ADMITTED (Inpatient admission to ward/ICU)</option>
+                  <option value="TRANSFERRED">TRANSFERRED (Transferred to higher-level institution)</option>
+                  <option value="OTHER">OTHER (Clinical documentation)</option>
+                </select>
+              </div>
+
+              {hospOutcomeDisposition === "ADMITTED" && (
+                <div>
+                  <label className="text-xs font-semibold text-navy-900">Admitting Department</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Cardiology Ward, CCU, Surgical ICU"
+                    value={hospOutcomeDept}
+                    onChange={(e) => setHospOutcomeDept(e.target.value)}
+                    className="input text-xs w-full mt-1"
+                  />
+                </div>
+              )}
+
+              {hospOutcomeDisposition === "TRANSFERRED" && (
+                <div>
+                  <label className="text-xs font-semibold text-navy-900">Receiving Transfer Institution</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Apex Multi-Specialty Heart Center"
+                    value={hospOutcomeFacility}
+                    onChange={(e) => setHospOutcomeFacility(e.target.value)}
+                    className="input text-xs w-full mt-1"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Clinical & Operational Notes</label>
+                <textarea
+                  rows={3}
+                  placeholder="Clinical condition at release/admission, vital stability, discharge instructions..."
+                  value={hospOutcomeNotes}
+                  onChange={(e) => setHospOutcomeNotes(e.target.value)}
+                  className="input text-xs w-full mt-1"
+                  required
+                />
+              </div>
+
+              {selectedOutcome && (
+                <div>
+                  <label className="text-xs font-semibold text-navy-900">Amendment Justification</label>
+                  <input
+                    type="text"
+                    placeholder="Reason for modifying outcome disposition..."
+                    value={hospAmendmentReason}
+                    onChange={(e) => setHospAmendmentReason(e.target.value)}
+                    className="input text-xs w-full mt-1"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setOutcomeModalOpen(false)}
+                className="btn-secondary text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveHospOutcome}
+                disabled={savingHospOutcome || !hospOutcomeNotes.trim()}
+                className="btn-primary text-xs"
+              >
+                {savingHospOutcome ? "Saving..." : "Confirm Outcome"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Discharge Document Modal (Prompt 10) */}
+      {uploadDocModalOpen && selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/50 p-4 backdrop-blur-sm">
+          <form onSubmit={handleUploadDischargeDoc} className="card w-full max-w-lg p-6 space-y-4">
+            <h3 className="font-display text-base font-bold text-navy-900">
+              Upload Official Hospital Discharge Document
+            </h3>
+            <p className="text-xs text-navy-900/60">
+              Upload physical discharge card, summary sheet, or treatment order. Preserves OCR text and creates an evidence-grounded draft summary.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Document Title</label>
+                <input
+                  type="text"
+                  placeholder="e.g. CCU Discharge Summary & Orders"
+                  value={uploadDocTitle}
+                  onChange={(e) => setUploadDocTitle(e.target.value)}
+                  className="input text-xs w-full mt-1"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Document Type</label>
+                <select
+                  value={uploadDocType}
+                  onChange={(e) => setUploadDocType(e.target.value)}
+                  className="input text-xs w-full mt-1"
+                >
+                  <option value="Discharge Summary">Discharge Summary</option>
+                  <option value="Discharge Prescription">Discharge Prescription</option>
+                  <option value="Clinical Lab Summary">Clinical Lab Summary</option>
+                  <option value="Physician Orders">Physician Orders</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-navy-900">Select File (PDF, PNG, JPG, TXT)</label>
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.txt,.tif"
+                  onChange={(e) => setUploadDocFile(e.target.files?.[0] || null)}
+                  className="input text-xs w-full mt-1"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setUploadDocModalOpen(false)}
+                className="btn-secondary text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={uploadingDoc || !uploadDocFile}
+                className="btn-primary text-xs"
+              >
+                {uploadingDoc ? "Processing OCR..." : "Upload & Run OCR Synthesis"}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

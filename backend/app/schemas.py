@@ -42,9 +42,13 @@ ReferralResponseType = Literal[
 ]
 ReservationStatus = Literal["HELD", "CONFIRMED", "RELEASED", "EXPIRED", "CONSUMED"]
 IncidentReporterType = Literal[
-    "PATIENT", "FAMILY", "BYSTANDER", "AMBULANCE", "DISPATCHER", "HOSPITAL_STAFF", "OTHER"
+    "PATIENT", "FAMILY", "BYSTANDER", "AMBULANCE", "DISPATCHER", "HOSPITAL_STAFF",
+    "PHYSICIAN", "DOCTOR", "FAMILY_WITNESS", "PATIENT_WITNESS", "OTHER",
 ]
-IncidentReportType = Literal["TEXT", "VOICE_TRANSCRIPTION", "VITALS", "OBSERVATION", "OTHER"]
+IncidentReportType = Literal[
+    "TEXT", "VOICE_TRANSCRIPTION", "VITALS", "OBSERVATION",
+    "CLINICAL_OBSERVATION", "SYMPTOM_UPDATE", "VITALS_REPORT", "HANDOVER_NOTE", "FAMILY_OBSERVATION", "OTHER",
+]
 
 
 class RegisterIn(BaseModel):
@@ -788,4 +792,203 @@ class HandoverAcknowledgementOut(BaseModel):
     acknowledged_at: datetime
     status: str
     operational_remarks: str | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ==============================================================================
+# Prompt 10: Post-Emergency Continuity, Outcomes, Discharges & Follow-Up Schemas
+# ==============================================================================
+
+OutcomeDisposition = Literal[
+    "DISCHARGED",
+    "ADMITTED",
+    "TRANSFERRED",
+    "OBSERVATION",
+    "DECEASED",
+    "LEFT_AGAINST_ADVICE",
+    "OTHER",
+]
+
+DischargeCondition = Literal["STABLE", "AMBULATORY", "CRITICAL", "TRANSFERRED", "IMPROVED", "OTHER"]
+
+MedReconciliationStatus = Literal["CONTINUE", "START", "STOP", "CHANGE", "NOT_RECONCILED"]
+
+FollowUpStatus = Literal["PLANNED", "SCHEDULED", "COMPLETED", "CANCELLED", "MISSED", "RESCHEDULED"]
+
+
+class EmergencyOutcomeCreate(BaseModel):
+    disposition: OutcomeDisposition
+    disposition_notes: str | None = None
+    outcome_at: datetime | None = None
+
+
+class EmergencyOutcomeAmend(BaseModel):
+    disposition: OutcomeDisposition
+    disposition_notes: str | None = None
+    amendment_reason: str = Field(..., min_length=3)
+
+
+class EmergencyOutcomeOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    patient_id: int
+    hospital_id: int
+    hospital_name: str | None = None
+    disposition: str
+    disposition_notes: str | None = None
+    outcome_at: datetime
+    verification_status: str
+    recorded_by_user_id: int | None = None
+    recorded_by_name: str | None = None
+    verified_by_user_id: int | None = None
+    verified_by_name: str | None = None
+    verified_at: datetime | None = None
+    version: int
+    parent_outcome_id: int | None = None
+    amendment_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DischargeSummaryGenerateIn(BaseModel):
+    primary_diagnosis: str | None = None
+    clinical_course: str | None = None
+    discharge_condition: str = "STABLE"
+    precautions: list[str] = Field(default_factory=list)
+    secondary_diagnoses: list[str] = Field(default_factory=list)
+    procedures_performed: list[str] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class DischargeSummaryApproveIn(BaseModel):
+    approval_notes: str | None = None
+
+
+class DischargeSummaryRejectIn(BaseModel):
+    rejection_reason: str = Field(..., min_length=3)
+
+
+class DischargeSummaryOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    patient_id: int
+    hospital_id: int
+    hospital_name: str | None = None
+    source_report_id: int | None = None
+    version: int
+    status: str
+    admission_date: str | None = None
+    discharge_date: str | None = None
+    primary_diagnosis: str | None = None
+    secondary_diagnoses: list[str] | None = None
+    procedures_performed: list[str] | None = None
+    clinical_course: str | None = None
+    discharge_condition: str | None = None
+    precautions: list[str] | None = None
+    summary_data: dict
+    author_user_id: int | None = None
+    author_name: str | None = None
+    approved_by_user_id: int | None = None
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
+    approval_notes: str | None = None
+    rejection_reason: str | None = None
+    amendment_reason: str | None = None
+    is_current_approved: bool
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MedicationReconciliationCreate(BaseModel):
+    medication_name: str = Field(..., min_length=1, max_length=160)
+    dosage: str | None = None
+    route: str | None = "ORAL"
+    frequency: str | None = "ONCE_DAILY"
+    reconciliation_status: MedReconciliationStatus
+    source_type: str = "DISCHARGE_ORDER"
+    clinical_reason: str | None = None
+
+
+class MedicationReconciliationVerifyIn(BaseModel):
+    verification_status: Literal["VERIFIED", "REJECTED"] = "VERIFIED"
+    clinical_reason: str | None = None
+
+
+class MedicationReconciliationOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    patient_id: int
+    hospital_id: int
+    hospital_name: str | None = None
+    discharge_summary_id: int | None = None
+    medication_name: str
+    dosage: str | None = None
+    route: str | None = None
+    frequency: str | None = None
+    reconciliation_status: str
+    source_type: str
+    clinical_reason: str | None = None
+    verification_status: str
+    verified_by_user_id: int | None = None
+    verified_by_name: str | None = None
+    verified_at: datetime | None = None
+    promoted_fact_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FollowUpPlanCreate(BaseModel):
+    specialty: str = Field(..., min_length=2, max_length=80)
+    department_id: int | None = None
+    scheduled_date: str | None = None
+    instructions: str = Field(..., min_length=2)
+
+
+class FollowUpPlanUpdateIn(BaseModel):
+    status: FollowUpStatus
+    completion_notes: str | None = None
+    scheduled_date: str | None = None
+
+
+class FollowUpPlanOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    patient_id: int
+    hospital_id: int
+    hospital_name: str | None = None
+    department_id: int | None = None
+    department_name: str | None = None
+    specialty: str
+    scheduled_date: str | None = None
+    instructions: str
+    status: str
+    created_by_user_id: int | None = None
+    created_by_name: str | None = None
+    verified_by_user_id: int | None = None
+    verified_by_name: str | None = None
+    verified_at: datetime | None = None
+    completion_notes: str | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmergencyHistoryItemOut(BaseModel):
+    case_id: int
+    emergency_type: str
+    status: str
+    priority: int
+    created_at: datetime
+    completed_at: datetime | None = None
+    hospital_id: int | None = None
+    hospital_name: str | None = None
+    hospital_address: str | None = None
+    outcome: EmergencyOutcomeOut | None = None
+    discharge_summary: DischargeSummaryOut | None = None
+    follow_up_count: int = 0
+    medication_count: int = 0
     model_config = ConfigDict(from_attributes=True)

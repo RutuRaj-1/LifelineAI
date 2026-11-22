@@ -523,3 +523,181 @@ export const emergencyOrchApi = {
       operational_remarks: remarks,
     }),
 };
+
+// --- Prompt 10: Post-Emergency Continuity & Outcome Interfaces ---
+export interface EmergencyOutcome {
+  id: number;
+  emergency_case_id: number;
+  hospital_id?: number | null;
+  hospital_name?: string | null;
+  disposition: "DISCHARGED" | "ADMITTED" | "TRANSFERRED" | "OTHER" | string;
+  disposition_notes: string;
+  admitted_department?: string | null;
+  transferred_to_facility?: string | null;
+  outcome_at: string;
+  recorded_by_user_id: number;
+  recorded_by_name?: string | null;
+  verified_by_user_id?: number | null;
+  verified_by_name?: string | null;
+  verified_at?: string | null;
+  verification_status: "PENDING_VERIFICATION" | "VERIFIED" | "AMENDED";
+  version: number;
+  amendment_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DischargeSummary {
+  id: number;
+  emergency_case_id: number;
+  patient_id: number;
+  hospital_id?: number | null;
+  hospital_name?: string | null;
+  version: number;
+  status: "DRAFT" | "PENDING_PHYSICIAN_APPROVAL" | "APPROVED" | "REJECTED";
+  source_report_id?: number | null;
+  primary_diagnosis: string;
+  secondary_diagnoses?: string[];
+  treatment_summary?: string | null;
+  clinical_course?: string | null;
+  discharge_condition: string;
+  precautions?: string[];
+  dietary_restrictions?: string[];
+  follow_up_instructions?: string | null;
+  discharge_date: string;
+  evidence_citations?: { source: string; text?: string }[];
+  missing_data_warnings?: string[];
+  non_diagnostic_disclaimer: string;
+  approved_by_doctor_id?: number | null;
+  approved_by_name?: string | null;
+  approved_at?: string | null;
+  rejection_reason?: string | null;
+  is_current_approved: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MedicationReconciliationItem {
+  id: number;
+  emergency_case_id: number;
+  patient_id: number;
+  medication_name: string;
+  dosage: string;
+  route: string;
+  frequency: string;
+  action: "CONTINUE" | "START" | "STOP" | "CHANGE" | string;
+  clinical_indication?: string | null;
+  source: string;
+  status: "PROPOSED" | "VERIFIED" | "REJECTED";
+  verified_by_doctor_id?: number | null;
+  verified_by_name?: string | null;
+  verified_at?: string | null;
+  verification_notes?: string | null;
+  promoted_clinical_fact_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FollowUpPlanItem {
+  id: number;
+  emergency_case_id: number;
+  patient_id: number;
+  hospital_id?: number | null;
+  hospital_name?: string | null;
+  specialty: string;
+  provider_name?: string | null;
+  timeframe: string;
+  scheduled_date?: string | null;
+  instructions: string;
+  status: "PLANNED" | "SCHEDULED" | "COMPLETED" | "CANCELLED" | string;
+  verified_by_user_id?: number | null;
+  verified_by_name?: string | null;
+  verified_at?: string | null;
+  completion_notes?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmergencyHistoryItem {
+  case_id: number;
+  emergency_type: string;
+  status: string;
+  priority: number;
+  created_at: string;
+  completed_at?: string | null;
+  hospital_id?: number | null;
+  hospital_name?: string | null;
+  hospital_address?: string | null;
+  outcome?: {
+    id: number;
+    disposition: string;
+    disposition_notes: string;
+    outcome_at: string;
+    verification_status: string;
+    version: number;
+  } | null;
+  discharge_summary?: {
+    id: number;
+    version: number;
+    status: string;
+    primary_diagnosis: string;
+    discharge_condition: string;
+    discharge_date: string;
+    precautions?: string[];
+    is_current_approved: boolean;
+  } | null;
+  follow_up_count: number;
+  medication_count: number;
+}
+
+export const postEmergencyApi = {
+  // Outcomes
+  recordOutcome: (caseId: number, data: { disposition: string; disposition_notes: string; admitted_department?: string; transferred_to_facility?: string }) =>
+    api.post<EmergencyOutcome>(`/emergency/${caseId}/outcome`, data),
+  amendOutcome: (caseId: number, data: { disposition: string; disposition_notes: string; amendment_reason: string; admitted_department?: string; transferred_to_facility?: string }) =>
+    api.patch<EmergencyOutcome>(`/emergency/${caseId}/outcome`, data),
+  getOutcome: (caseId: number) =>
+    api.get<EmergencyOutcome | null>(`/emergency/${caseId}/outcome`),
+
+  // Discharge Documents & Summaries
+  uploadDischargeDocument: (caseId: number, form: FormData) =>
+    api.postForm<{ report_id: number; title: string; ocr_status: string; discharge_summary_id: number; version: number; status: string }>(`/emergency/${caseId}/discharge-documents`, form),
+  listDischargeDocuments: (caseId: number) =>
+    api.get<{ id: number; title: string; report_type: string; original_filename?: string; ocr_status: string; report_date?: string; uploaded_at: string }[]>(`/emergency/${caseId}/discharge-documents`),
+  generateDischargeSummary: (caseId: number, data?: { primary_diagnosis?: string; treatment_summary?: string; clinical_course?: string; discharge_condition?: string; follow_up_instructions?: string; precautions?: string[]; dietary_restrictions?: string[]; source_report_id?: number }) =>
+    api.post<DischargeSummary>(`/emergency/${caseId}/discharge-summary/generate`, data || {}),
+  getDischargeSummary: (caseId: number) =>
+    api.get<DischargeSummary | null>(`/emergency/${caseId}/discharge-summary`),
+  approveDischargeSummary: (caseId: number, summaryId: number, notes?: string) =>
+    api.post<DischargeSummary>(`/emergency/${caseId}/discharge-summary/${summaryId}/approve`, { approval_notes: notes }),
+  rejectDischargeSummary: (caseId: number, summaryId: number, reason: string) =>
+    api.post<DischargeSummary>(`/emergency/${caseId}/discharge-summary/${summaryId}/reject`, { rejection_reason: reason }),
+
+  // Medication Reconciliation
+  createMedicationReconciliation: (caseId: number, data: { medication_name: string; dosage: string; route?: string; frequency?: string; action: string; clinical_indication?: string; source?: string }) =>
+    api.post<MedicationReconciliationItem>(`/emergency/${caseId}/medication-reconciliation`, data),
+  listMedicationReconciliations: (caseId: number) =>
+    api.get<MedicationReconciliationItem[]>(`/emergency/${caseId}/medication-reconciliation`),
+  verifyMedicationReconciliation: (caseId: number, itemId: number, approved: boolean, notes?: string) =>
+    api.post<MedicationReconciliationItem>(`/emergency/${caseId}/medication-reconciliation/${itemId}/verify`, { approved, verification_notes: notes }),
+
+  // Follow-Up Plans
+  createFollowUpPlan: (caseId: number, data: { specialty: string; instructions: string; provider_name?: string; timeframe?: string; scheduled_date?: string }) =>
+    api.post<FollowUpPlanItem>(`/emergency/${caseId}/follow-ups`, data),
+  listFollowUpPlans: (caseId: number) =>
+    api.get<FollowUpPlanItem[]>(`/emergency/${caseId}/follow-ups`),
+  updateFollowUpStatus: (followUpId: number, data: { status: string; completion_notes?: string; scheduled_date?: string }) =>
+    api.patch<FollowUpPlanItem>(`/follow-ups/${followUpId}`, data),
+
+  // Longitudinal Patient Continuity Views
+  getPatientEmergencyHistory: () =>
+    api.get<EmergencyHistoryItem[]>("/patient/emergency-history"),
+  getPatientDischargeSummaries: () =>
+    api.get<DischargeSummary[]>("/patient/discharge-summaries"),
+  getPatientMedications: () =>
+    api.get<MedicationReconciliationItem[]>("/patient/medication-reconciliation"),
+  getPatientFollowUps: () =>
+    api.get<FollowUpPlanItem[]>("/patient/follow-ups"),
+};
+

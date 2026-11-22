@@ -30,6 +30,10 @@ EXPECTED_DOMAIN_TABLES = EXPECTED_BASE_TABLES.union({
     "emergency_incident_reports",
     "clinical_handovers",
     "handover_acknowledgements",
+    "emergency_outcomes",
+    "discharge_summaries",
+    "medication_reconciliations",
+    "follow_up_plans",
 })
 
 
@@ -72,6 +76,16 @@ def test_alembic_upgrade_and_downgrade_full_chain():
         case_cols = {c["name"] for c in insp2.get_columns("emergency_cases")}
         assert "idempotency_key" in case_cols
         assert "current_handover_id" in case_cols
+        outcome_cols = {c["name"] for c in insp2.get_columns("emergency_outcomes")}
+        assert "disposition" in outcome_cols
+        assert "verification_status" in outcome_cols
+        discharge_cols = {c["name"] for c in insp2.get_columns("discharge_summaries")}
+        assert "primary_diagnosis" in discharge_cols
+        assert "summary_data" in discharge_cols
+        med_cols = {c["name"] for c in insp2.get_columns("medication_reconciliations")}
+        assert "reconciliation_status" in med_cols
+        fu_cols = {c["name"] for c in insp2.get_columns("follow_up_plans")}
+        assert "instructions" in fu_cols
         engine2.dispose()
 
         # 3. Downgrade back to 001_initial_schema
@@ -81,6 +95,10 @@ def test_alembic_upgrade_and_downgrade_full_chain():
         assert "hospital_departments" not in tables_reverted
         assert "referral_requests" not in tables_reverted
         assert "patient_clinical_facts" not in tables_reverted
+        assert "emergency_outcomes" not in tables_reverted
+        assert "discharge_summaries" not in tables_reverted
+        assert "medication_reconciliations" not in tables_reverted
+        assert "follow_up_plans" not in tables_reverted
         assert EXPECTED_BASE_TABLES.issubset(tables_reverted)
         engine3.dispose()
 

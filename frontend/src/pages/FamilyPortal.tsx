@@ -7,6 +7,8 @@ import {
   emergencyOrchApi,
   IncidentReportItem,
   TimelineEntry,
+  postEmergencyApi,
+  EmergencyOutcome,
 } from "../lib/api";
 import { useEmergencyEvents } from "../lib/ws";
 import { TYPE_LABEL, timeAgo } from "../lib/format";
@@ -20,6 +22,7 @@ export default function FamilyPortal() {
   const [active, setActive] = useState<CaseDetail | null | undefined>(undefined);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [incidents, setIncidents] = useState<IncidentReportItem[]>([]);
+  const [familyOutcome, setFamilyOutcome] = useState<EmergencyOutcome | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Family-assisted SOS form
@@ -43,13 +46,19 @@ export default function FamilyPortal() {
   useEmergencyEvents(() => refresh());
 
   useEffect(() => {
-    if (!active) return;
+    if (!active) {
+      setFamilyOutcome(null);
+      return;
+    }
     api.get<TimelineEntry[]>(`/emergency/${active.id}/timeline`)
       .then(setTimeline)
       .catch(() => {});
     emergencyOrchApi.getIncidents(active.id)
       .then(setIncidents)
       .catch(() => {});
+    postEmergencyApi.getOutcome(active.id)
+      .then(setFamilyOutcome)
+      .catch(() => setFamilyOutcome(null));
   }, [active?.id, active?.updated_at]);
 
   function handleTriggerFamilySos() {
@@ -240,6 +249,44 @@ export default function FamilyPortal() {
           )}
         </div>
       </div>
+
+      {/* Post-Emergency Status & Care Disposition (Privacy-Protected Family View) */}
+      {familyOutcome && (
+        <div className="card p-5 border-teal-200 bg-teal-50/30 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-teal-800">
+              Care Continuity Status
+            </span>
+            <span className={`pill text-[10px] font-bold ${
+              familyOutcome.disposition === "DISCHARGED"
+                ? "bg-teal-100 text-teal-900"
+                : familyOutcome.disposition === "ADMITTED"
+                ? "bg-indigo-100 text-indigo-900"
+                : "bg-amber-100 text-amber-900"
+            }`}>
+              {familyOutcome.disposition}
+            </span>
+          </div>
+
+          <p className="text-sm font-semibold text-navy-900">
+            {familyOutcome.disposition === "ADMITTED"
+              ? `Patient has been admitted for inpatient care${familyOutcome.admitted_department ? ` in ${familyOutcome.admitted_department}` : ""} at the treating hospital.`
+              : familyOutcome.disposition === "DISCHARGED"
+              ? "Patient has safely completed emergency treatment and been discharged home."
+              : familyOutcome.disposition === "TRANSFERRED"
+              ? `Patient has been transferred to ${familyOutcome.transferred_to_facility || "a specialized facility"} for continued care.`
+              : `Care Status: ${familyOutcome.disposition}`}
+          </p>
+
+          <p className="text-xs text-navy-900/70">
+            {familyOutcome.disposition_notes}
+          </p>
+
+          <p className="text-[10px] text-navy-900/50 pt-1 border-t border-teal-200/50">
+            Updated: {new Date(familyOutcome.outcome_at).toLocaleString()}
+          </p>
+        </div>
+      )}
 
       {/* Family Bystander Update Form */}
       <div className="card p-5 space-y-3">

@@ -11,6 +11,11 @@ import {
   ReferralItem,
   referralApi,
   emergencyOrchApi,
+  postEmergencyApi,
+  EmergencyOutcome,
+  DischargeSummary,
+  MedicationReconciliationItem,
+  FollowUpPlanItem,
 } from "../lib/api";
 import { useEmergencyEvents } from "../lib/ws";
 import { TYPE_LABEL, priorityLabel, timeAgo } from "../lib/format";
@@ -25,7 +30,7 @@ import {
   FreshnessBadge,
 } from "../components/StatusBadges";
 
-type DetailTab = "intake" | "handover" | "referrals" | "summary";
+type DetailTab = "intake" | "handover" | "referrals" | "summary" | "continuity";
 
 export default function DoctorDashboard() {
   const [cases, setCases] = useState<CaseDetail[]>([]);
@@ -59,6 +64,38 @@ export default function DoctorDashboard() {
   const [clarificationModal, setClarificationModal] = useState<{ referralId: number; question: string } | null>(null);
   const [clarificationAnswer, setClarificationAnswer] = useState("");
 
+  // Post-Emergency Continuity State (Prompt 10)
+  const [outcome, setOutcome] = useState<EmergencyOutcome | null>(null);
+  const [outcomeDisposition, setOutcomeDisposition] = useState<string>("DISCHARGED");
+  const [outcomeNotes, setOutcomeNotes] = useState<string>("");
+  const [outcomeDept, setOutcomeDept] = useState<string>("");
+  const [outcomeFacility, setOutcomeFacility] = useState<string>("");
+  const [outcomeAmendmentReason, setOutcomeAmendmentReason] = useState<string>("");
+  const [recordingOutcome, setRecordingOutcome] = useState(false);
+
+  const [dischargeSummary, setDischargeSummary] = useState<DischargeSummary | null>(null);
+  const [approvingDischarge, setApprovingDischarge] = useState(false);
+  const [dischargeApprovalNotes, setDischargeApprovalNotes] = useState("");
+  const [dischargeRejectionModal, setDischargeRejectionModal] = useState(false);
+  const [dischargeRejectionReason, setDischargeRejectionReason] = useState("");
+  const [generatingDraft, setGeneratingDraft] = useState(false);
+
+  const [medRecs, setMedRecs] = useState<MedicationReconciliationItem[]>([]);
+  const [newMedName, setNewMedName] = useState("");
+  const [newMedDosage, setNewMedDosage] = useState("");
+  const [newMedFreq, setNewMedFreq] = useState("Daily");
+  const [newMedAction, setNewMedAction] = useState("CONTINUE");
+  const [newMedIndication, setNewMedIndication] = useState("");
+  const [addingMedRec, setAddingMedRec] = useState(false);
+
+  const [followUps, setFollowUps] = useState<FollowUpPlanItem[]>([]);
+  const [newFuSpecialty, setNewFuSpecialty] = useState("Cardiology");
+  const [newFuProvider, setNewFuProvider] = useState("");
+  const [newFuTimeframe, setNewFuTimeframe] = useState("Within 7 days");
+  const [newFuDate, setNewFuDate] = useState("");
+  const [newFuInstructions, setNewFuInstructions] = useState("");
+  const [addingFu, setAddingFu] = useState(false);
+
   const refreshCases = useCallback(() => {
     api.get<CaseDetail[]>("/doctor/cases")
       .then((rows) => {
@@ -81,6 +118,18 @@ export default function DoctorDashboard() {
     referralApi.getEligibility(caseId, requestedResource)
       .then(setEligibility)
       .catch(() => setEligibility(null));
+    postEmergencyApi.getOutcome(caseId).then((o) => {
+      setOutcome(o);
+      if (o) {
+        setOutcomeDisposition(o.disposition);
+        setOutcomeNotes(o.disposition_notes);
+        setOutcomeDept(o.admitted_department || "");
+        setOutcomeFacility(o.transferred_to_facility || "");
+      }
+    }).catch(() => setOutcome(null));
+    postEmergencyApi.getDischargeSummary(caseId).then(setDischargeSummary).catch(() => setDischargeSummary(null));
+    postEmergencyApi.listMedicationReconciliations(caseId).then(setMedRecs).catch(() => setMedRecs([]));
+    postEmergencyApi.listFollowUpPlans(caseId).then(setFollowUps).catch(() => setFollowUps([]));
   }, [requestedResource]);
 
   useEffect(refreshCases, [refreshCases]);
@@ -206,6 +255,140 @@ export default function DoctorDashboard() {
       if (selected) loadCaseDetails(selected.id);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to provide clarification answer");
+    }
+  }
+
+  // --- Post-Emergency Handlers (Prompt 10) ---
+  async function handleRecordOrAmendOutcome() {
+    if (!selected || !outcomeNotes.trim()) return;
+    setRecordingOutcome(true);
+    setErrorMessage(null);
+    try {
+      if (outcome) {
+        const updated = await postEmergencyApi.amendOutcome(selected.id, {
+          disposition: outcomeDisposition,
+          disposition_notes: outcomeNotes.trim(),
+          amendment_reason: outcomeAmendmentReason.trim() || "Clinical outcome updated by attending physician",
+          admitted_department: outcomeDept.trim() || undefined,
+          transferred_to_facility: outcomeFacility.trim() || undefined,
+        });
+        setOutcome(updated);
+      } else {
+        const created = await postEmergencyApi.recordOutcome(selected.id, {
+          disposition: outcomeDisposition,
+          disposition_notes: outcomeNotes.trim(),
+          admitted_department: outcomeDept.trim() || undefined,
+          transferred_to_facility: outcomeFacility.trim() || undefined,
+        });
+        setOutcome(created);
+      }
+      refreshCases();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to record emergency outcome");
+    } finally {
+      setRecordingOutcome(false);
+    }
+  }
+
+  async function handleApproveDischarge() {
+    if (!selected || !dischargeSummary) return;
+    setApprovingDischarge(true);
+    setErrorMessage(null);
+    try {
+      const res = await postEmergencyApi.approveDischargeSummary(selected.id, dischargeSummary.id, dischargeApprovalNotes.trim() || undefined);
+      setDischargeSummary(res);
+      refreshCases();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to approve discharge summary");
+    } finally {
+      setApprovingDischarge(false);
+    }
+  }
+
+  async function handleRejectDischarge() {
+    if (!selected || !dischargeSummary || !dischargeRejectionReason.trim()) return;
+    setApprovingDischarge(true);
+    setErrorMessage(null);
+    try {
+      const res = await postEmergencyApi.rejectDischargeSummary(selected.id, dischargeSummary.id, dischargeRejectionReason.trim());
+      setDischargeSummary(res);
+      setDischargeRejectionModal(false);
+      setDischargeRejectionReason("");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to reject discharge summary");
+    } finally {
+      setApprovingDischarge(false);
+    }
+  }
+
+  async function handleGenerateDischargeDraft() {
+    if (!selected) return;
+    setGeneratingDraft(true);
+    setErrorMessage(null);
+    try {
+      const draft = await postEmergencyApi.generateDischargeSummary(selected.id);
+      setDischargeSummary(draft);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to generate discharge summary draft");
+    } finally {
+      setGeneratingDraft(false);
+    }
+  }
+
+  async function handleVerifyMedRec(itemId: number, approved: boolean) {
+    if (!selected) return;
+    try {
+      const updated = await postEmergencyApi.verifyMedicationReconciliation(selected.id, itemId, approved);
+      setMedRecs((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to verify medication reconciliation item");
+    }
+  }
+
+  async function handleAddMedRec(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selected || !newMedName.trim() || !newMedDosage.trim()) return;
+    setAddingMedRec(true);
+    try {
+      const created = await postEmergencyApi.createMedicationReconciliation(selected.id, {
+        medication_name: newMedName.trim(),
+        dosage: newMedDosage.trim(),
+        frequency: newMedFreq.trim(),
+        action: newMedAction,
+        clinical_indication: newMedIndication.trim() || undefined,
+        source: "Attending Physician Verification",
+      });
+      setMedRecs((prev) => [...prev, created]);
+      setNewMedName("");
+      setNewMedDosage("");
+      setNewMedIndication("");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to add medication entry");
+    } finally {
+      setAddingMedRec(false);
+    }
+  }
+
+  async function handleAddFollowUp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selected || !newFuInstructions.trim()) return;
+    setAddingFu(true);
+    try {
+      const created = await postEmergencyApi.createFollowUpPlan(selected.id, {
+        specialty: newFuSpecialty,
+        provider_name: newFuProvider.trim() || undefined,
+        timeframe: newFuTimeframe,
+        scheduled_date: newFuDate || undefined,
+        instructions: newFuInstructions.trim(),
+      });
+      setFollowUps((prev) => [...prev, created]);
+      setNewFuInstructions("");
+      setNewFuDate("");
+      setNewFuProvider("");
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to create follow up plan");
+    } finally {
+      setAddingFu(false);
     }
   }
 
@@ -365,6 +548,7 @@ export default function DoctorDashboard() {
                 { id: "handover", label: `Clinical Handover ${handover ? `(v${handover.version})` : ""}` },
                 { id: "referrals", label: `Referral Dispatch (${caseReferrals.length})` },
                 { id: "summary", label: "Patient Health Vault & Checklist" },
+                { id: "continuity", label: `Post-Emergency & Continuity ${outcome ? `(${outcome.disposition})` : ""}` },
               ].map((t) => (
                 <button
                   key={t.id}
@@ -831,6 +1015,541 @@ export default function DoctorDashboard() {
                 )}
               </div>
             )}
+
+            {/* Tab 5: Post-Emergency Continuity & Outcome (Prompt 10) */}
+            {activeTab === "continuity" && (
+              <div className="space-y-6">
+                {/* 1. Emergency Outcome & Disposition */}
+                <div className="card p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-navy-900/10 pb-3">
+                    <div>
+                      <h3 className="font-display text-base font-bold text-navy-900">
+                        Emergency Episode Outcome & Disposition
+                      </h3>
+                      <p className="text-xs text-navy-900/60">
+                        Distinguish clinical release, inpatient admission, or specialized facility transfer.
+                      </p>
+                    </div>
+                    {outcome && (
+                      <span className={`pill ${
+                        outcome.disposition === "DISCHARGED"
+                          ? "bg-teal-100 text-teal-900"
+                          : outcome.disposition === "ADMITTED"
+                          ? "bg-indigo-100 text-indigo-900"
+                          : "bg-amber-100 text-amber-900"
+                      } text-xs font-bold`}>
+                        {outcome.disposition} (v{outcome.version} · {outcome.verification_status})
+                      </span>
+                    )}
+                  </div>
+
+                  {outcome ? (
+                    <div className="rounded-lg bg-navy-900/[0.02] p-4 border border-navy-900/10 space-y-2 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <span className="font-bold text-navy-900/60 uppercase text-[10px]">Active Disposition</span>
+                          <p className="text-sm font-semibold text-navy-900">{outcome.disposition}</p>
+                          {outcome.admitted_department && (
+                            <p className="text-navy-900/70">Admitted Department: <span className="font-semibold">{outcome.admitted_department}</span></p>
+                          )}
+                          {outcome.transferred_to_facility && (
+                            <p className="text-navy-900/70">Transferred Facility: <span className="font-semibold">{outcome.transferred_to_facility}</span></p>
+                          )}
+                        </div>
+                        <div>
+                          <span className="font-bold text-navy-900/60 uppercase text-[10px]">Provenance & Timestamps</span>
+                          <p className="text-navy-900/70">Recorded by: {outcome.recorded_by_name || `User #${outcome.recorded_by_user_id}`}</p>
+                          <p className="text-navy-900/50">Recorded at: {new Date(outcome.outcome_at).toLocaleString()}</p>
+                          {outcome.amendment_reason && (
+                            <p className="text-amber-800 font-medium mt-1">Amendment Note: {outcome.amendment_reason}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-navy-900/5">
+                        <span className="font-bold text-navy-900/60 uppercase text-[10px]">Clinical Disposition Notes</span>
+                        <p className="text-navy-900 mt-0.5 whitespace-pre-wrap">{outcome.disposition_notes}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-navy-900/50 italic">
+                      No final outcome has been recorded for this case yet. Emergency status is currently active.
+                    </p>
+                  )}
+
+                  {/* Outcome Record / Amendment Form */}
+                  <div className="rounded-lg bg-navy-900/[0.01] p-4 border border-dashed border-navy-900/20 space-y-3">
+                    <h4 className="text-xs font-bold text-navy-900 uppercase">
+                      {outcome ? "Amend Documented Outcome" : "Record Episode Outcome"}
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-semibold text-navy-900/70">Disposition Type</label>
+                        <select
+                          className="input text-xs w-full mt-1"
+                          value={outcomeDisposition}
+                          onChange={(e) => setOutcomeDisposition(e.target.value)}
+                        >
+                          <option value="DISCHARGED">DISCHARGED (Outpatient release)</option>
+                          <option value="ADMITTED">ADMITTED (Inpatient admission)</option>
+                          <option value="TRANSFERRED">TRANSFERRED (Specialized facility)</option>
+                          <option value="OTHER">OTHER (Clinical documentation)</option>
+                        </select>
+                      </div>
+
+                      {outcomeDisposition === "ADMITTED" && (
+                        <div>
+                          <label className="text-[11px] font-semibold text-navy-900/70">Admitting Department</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Cardiology Ward 3B, CCU"
+                            className="input text-xs w-full mt-1"
+                            value={outcomeDept}
+                            onChange={(e) => setOutcomeDept(e.target.value)}
+                          />
+                        </div>
+                      )}
+
+                      {outcomeDisposition === "TRANSFERRED" && (
+                        <div>
+                          <label className="text-[11px] font-semibold text-navy-900/70">Receiving Facility Name</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Regional Heart & Lung Institute"
+                            className="input text-xs w-full mt-1"
+                            value={outcomeFacility}
+                            onChange={(e) => setOutcomeFacility(e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-navy-900/70">Clinical Disposition Notes</label>
+                      <textarea
+                        rows={2}
+                        placeholder="Detail clinical condition, stability at handover/discharge, and immediate post-emergency instructions..."
+                        className="input text-xs w-full mt-1"
+                        value={outcomeNotes}
+                        onChange={(e) => setOutcomeNotes(e.target.value)}
+                      />
+                    </div>
+
+                    {outcome && (
+                      <div>
+                        <label className="text-[11px] font-semibold text-navy-900/70">Reason for Amendment (Auditable)</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Condition reassessed after post-cath lab observation"
+                          className="input text-xs w-full mt-1"
+                          value={outcomeAmendmentReason}
+                          onChange={(e) => setOutcomeAmendmentReason(e.target.value)}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleRecordOrAmendOutcome}
+                        disabled={recordingOutcome || !outcomeNotes.trim()}
+                        className="btn-primary text-xs"
+                      >
+                        {recordingOutcome ? "Saving..." : outcome ? "Save Outcome Amendment" : "Record Emergency Outcome"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Evidence-Grounded Discharge Summary & Physician Approval Gate */}
+                <div className="card p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-navy-900/10 pb-3">
+                    <div>
+                      <h3 className="font-display text-base font-bold text-navy-900">
+                        Discharge Synthesis & Physician Approval Gate
+                      </h3>
+                      <p className="text-xs text-navy-900/60">
+                        Evidence-grounded continuity document. AI never diagnoses; requires explicit clinician approval.
+                      </p>
+                    </div>
+                    {dischargeSummary && (
+                      <span className={`pill ${
+                        dischargeSummary.status === "APPROVED"
+                          ? "bg-teal-100 text-teal-900"
+                          : dischargeSummary.status === "REJECTED"
+                          ? "bg-rose-100 text-rose-900"
+                          : "bg-amber-100 text-amber-900"
+                      } text-xs font-bold`}>
+                        {dischargeSummary.status} (v{dischargeSummary.version})
+                      </span>
+                    )}
+                  </div>
+
+                  {dischargeSummary ? (
+                    <div className="space-y-4 text-xs">
+                      {/* Non-Diagnostic Disclaimer Alert */}
+                      <div className="rounded-lg bg-teal-50 border border-teal-200 p-3 text-teal-900 space-y-1">
+                        <span className="font-bold uppercase text-[10px] tracking-wider text-teal-800">
+                          Evidence-Grounded Clinical Governance
+                        </span>
+                        <p className="text-[11px] leading-relaxed">{dischargeSummary.non_diagnostic_disclaimer}</p>
+                      </div>
+
+                      {/* Warnings if missing data */}
+                      {dischargeSummary.missing_data_warnings && dischargeSummary.missing_data_warnings.length > 0 && (
+                        <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-amber-900 text-xs">
+                          <span className="font-bold">Missing Data Warnings:</span>
+                          <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                            {dischargeSummary.missing_data_warnings.map((w, idx) => (
+                              <li key={idx}>{w}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <span className="font-bold text-navy-900/60 uppercase text-[10px]">Primary Diagnosis</span>
+                          <p className="font-semibold text-navy-900 text-sm">{dischargeSummary.primary_diagnosis}</p>
+
+                          <span className="font-bold text-navy-900/60 uppercase text-[10px] block pt-2">Clinical Course</span>
+                          <p className="text-navy-900/80 leading-relaxed whitespace-pre-wrap">{dischargeSummary.clinical_course || "Standard clinical protocol observed."}</p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <span className="font-bold text-navy-900/60 uppercase text-[10px]">Discharge Condition</span>
+                          <p className="font-medium text-navy-900">{dischargeSummary.discharge_condition}</p>
+
+                          {dischargeSummary.precautions && dischargeSummary.precautions.length > 0 && (
+                            <div>
+                              <span className="font-bold text-navy-900/60 uppercase text-[10px] block pt-2">Precautions & Red Flags</span>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {dischargeSummary.precautions.map((p, idx) => (
+                                  <span key={idx} className="rounded bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800 border border-rose-200">
+                                    ⚠️ {p}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {dischargeSummary.follow_up_instructions && (
+                            <div>
+                              <span className="font-bold text-navy-900/60 uppercase text-[10px] block pt-2">Follow-up Instructions</span>
+                              <p className="text-navy-900/80">{dischargeSummary.follow_up_instructions}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Evidence Citations */}
+                      {dischargeSummary.evidence_citations && dischargeSummary.evidence_citations.length > 0 && (
+                        <div className="pt-2 border-t border-navy-900/10">
+                          <span className="font-bold text-navy-900/60 uppercase text-[10px]">Evidence Citations</span>
+                          <div className="mt-1 space-y-1">
+                            {dischargeSummary.evidence_citations.map((c, idx) => (
+                              <p key={idx} className="text-[11px] text-navy-900/70 bg-navy-900/[0.02] p-1.5 rounded">
+                                <span className="font-semibold text-teal-800">[{c.source}]</span> {c.text}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Physician Approval / Rejection Gate */}
+                      {dischargeSummary.status !== "APPROVED" ? (
+                        <div className="mt-4 pt-4 border-t border-navy-900/10 rounded-lg bg-teal-900/[0.02] p-4 space-y-3">
+                          <h4 className="text-xs font-bold text-navy-900 uppercase">
+                            Attending Physician Verification Gate
+                          </h4>
+                          <p className="text-xs text-navy-900/60">
+                            By approving, you attest that you have reviewed this summary, confirmed all clinical facts, and verified the treatment plan.
+                          </p>
+                          <input
+                            type="text"
+                            placeholder="Optional approval remarks / clinical addenda..."
+                            className="input text-xs w-full"
+                            value={dischargeApprovalNotes}
+                            onChange={(e) => setDischargeApprovalNotes(e.target.value)}
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => setDischargeRejectionModal(true)}
+                              className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 border border-rose-200"
+                            >
+                              Reject & Request Revision
+                            </button>
+                            <button
+                              onClick={handleApproveDischarge}
+                              disabled={approvingDischarge}
+                              className="btn-primary text-xs"
+                            >
+                              {approvingDischarge ? "Approving..." : "Approve & Sign Discharge Summary"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-3 rounded-lg bg-teal-50 border border-teal-200 p-3 text-teal-900 text-xs flex items-center justify-between">
+                          <div>
+                            <span className="font-bold">✓ Clinically Approved & Signed</span>
+                            <p className="text-[11px] text-teal-800 mt-0.5">
+                              Approved by {dischargeSummary.approved_by_name || `Doctor #${dischargeSummary.approved_by_doctor_id}`} on {new Date(dischargeSummary.approved_at || "").toLocaleString()}. Integrated into patient Health Timeline.
+                            </p>
+                          </div>
+                          <button
+                            onClick={handleGenerateDischargeDraft}
+                            disabled={generatingDraft}
+                            className="btn-secondary text-xs"
+                          >
+                            Generate New Version
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 space-y-3">
+                      <p className="text-xs text-navy-900/50 italic">
+                        No discharge summary has been synthesized for this case yet.
+                      </p>
+                      <button
+                        onClick={handleGenerateDischargeDraft}
+                        disabled={generatingDraft}
+                        className="btn-primary text-xs"
+                      >
+                        {generatingDraft ? "Synthesizing Evidence..." : "Synthesize Discharge Summary Draft"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Medication Reconciliation Table */}
+                <div className="card p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-navy-900/10 pb-3">
+                    <div>
+                      <h3 className="font-display text-base font-bold text-navy-900">
+                        Medication Reconciliation & Longitudinal Promotion
+                      </h3>
+                      <p className="text-xs text-navy-900/60">
+                        Explicit CONTINUE, START, STOP, or CHANGE actions. Approved entries update longitudinal patient records.
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold text-navy-900/60">
+                      {medRecs.length} Reconciled Items
+                    </span>
+                  </div>
+
+                  {medRecs.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-navy-900/10 text-[10px] uppercase font-bold text-navy-900/60">
+                            <th className="py-2">Medication</th>
+                            <th className="py-2">Dosage & Freq</th>
+                            <th className="py-2">Action</th>
+                            <th className="py-2">Indication</th>
+                            <th className="py-2">Status</th>
+                            <th className="py-2 text-right">Verification</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-navy-900/5">
+                          {medRecs.map((m) => (
+                            <tr key={m.id} className="hover:bg-navy-900/[0.01]">
+                              <td className="py-2.5 font-semibold text-navy-900">{m.medication_name}</td>
+                              <td className="py-2.5 text-navy-900/70">{m.dosage} ({m.frequency})</td>
+                              <td className="py-2.5">
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                  m.action === "START"
+                                    ? "bg-teal-100 text-teal-800"
+                                    : m.action === "STOP"
+                                    ? "bg-rose-100 text-rose-800"
+                                    : m.action === "CHANGE"
+                                    ? "bg-purple-100 text-purple-800"
+                                    : "bg-blue-100 text-blue-800"
+                                }`}>
+                                  {m.action}
+                                </span>
+                              </td>
+                              <td className="py-2.5 text-navy-900/60">{m.clinical_indication || "—"}</td>
+                              <td className="py-2.5">
+                                <span className={`text-[10px] font-semibold ${
+                                  m.status === "VERIFIED" ? "text-teal-700" : "text-amber-700"
+                                }`}>
+                                  {m.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 text-right space-x-1">
+                                {m.status === "PROPOSED" ? (
+                                  <>
+                                    <button
+                                      onClick={() => handleVerifyMedRec(m.id, true)}
+                                      className="rounded bg-teal-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-teal-700"
+                                    >
+                                      Verify
+                                    </button>
+                                    <button
+                                      onClick={() => handleVerifyMedRec(m.id, false)}
+                                      className="rounded bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-200"
+                                    >
+                                      Reject
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-teal-800 font-medium">
+                                    ✓ Promoted
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-navy-900/50 italic py-2">
+                      No medication reconciliation entries documented yet.
+                    </p>
+                  )}
+
+                  {/* Add Medication Reconciliation Form */}
+                  <form onSubmit={handleAddMedRec} className="rounded-lg bg-navy-900/[0.01] p-3 border border-dashed border-navy-900/20 space-y-3">
+                    <span className="text-xs font-bold uppercase text-navy-900">Add Reconciled Medication</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Medication (e.g. Aspirin)"
+                        className="input text-xs"
+                        value={newMedName}
+                        onChange={(e) => setNewMedName(e.target.value)}
+                        required
+                      />
+                      <input
+                        type="text"
+                        placeholder="Dosage (e.g. 75mg Oral)"
+                        className="input text-xs"
+                        value={newMedDosage}
+                        onChange={(e) => setNewMedDosage(e.target.value)}
+                        required
+                      />
+                      <select
+                        className="input text-xs"
+                        value={newMedAction}
+                        onChange={(e) => setNewMedAction(e.target.value)}
+                      >
+                        <option value="CONTINUE">CONTINUE (Home med)</option>
+                        <option value="START">START (New discharge med)</option>
+                        <option value="STOP">STOP (Discontinued)</option>
+                        <option value="CHANGE">CHANGE (Dosage modified)</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="Indication / Reason"
+                        className="input text-xs"
+                        value={newMedIndication}
+                        onChange={(e) => setNewMedIndication(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={addingMedRec || !newMedName.trim() || !newMedDosage.trim()}
+                        className="btn-secondary text-xs"
+                      >
+                        {addingMedRec ? "Adding..." : "+ Propose Medication Action"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* 4. Longitudinal Follow-Up Plans */}
+                <div className="card p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-navy-900/10 pb-3">
+                    <div>
+                      <h3 className="font-display text-base font-bold text-navy-900">
+                        Longitudinal Follow-Up Care Plans
+                      </h3>
+                      <p className="text-xs text-navy-900/60">
+                        Structured post-emergency continuity appointments and clinical instructions.
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold text-navy-900/60">
+                      {followUps.length} Follow-Up Tasks
+                    </span>
+                  </div>
+
+                  {followUps.length > 0 ? (
+                    <div className="space-y-2">
+                      {followUps.map((f) => (
+                        <div key={f.id} className="rounded-lg bg-navy-900/[0.02] p-3 border border-navy-900/10 flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-navy-900">{f.specialty}</span>
+                              <span className="pill bg-indigo-50 text-indigo-800 text-[10px]">{f.timeframe}</span>
+                              <span className={`pill text-[10px] ${
+                                f.status === "COMPLETED" ? "bg-teal-100 text-teal-900" : "bg-amber-100 text-amber-900"
+                              }`}>
+                                {f.status}
+                              </span>
+                            </div>
+                            <p className="text-navy-900/70 mt-1">{f.instructions}</p>
+                            {f.provider_name && <p className="text-navy-900/50 text-[11px]">Provider: {f.provider_name}</p>}
+                            {f.scheduled_date && <p className="text-navy-900/50 text-[11px]">Target Date: {f.scheduled_date}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-navy-900/50 italic py-2">
+                      No follow-up plans scheduled yet.
+                    </p>
+                  )}
+
+                  {/* Add Follow-Up Form */}
+                  <form onSubmit={handleAddFollowUp} className="rounded-lg bg-navy-900/[0.01] p-3 border border-dashed border-navy-900/20 space-y-3">
+                    <span className="text-xs font-bold uppercase text-navy-900">Document Follow-Up Requirement</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Specialty (e.g. Cardiology, Neurology)"
+                        className="input text-xs"
+                        value={newFuSpecialty}
+                        onChange={(e) => setNewFuSpecialty(e.target.value)}
+                        required
+                      />
+                      <input
+                        type="text"
+                        placeholder="Timeframe (e.g. Within 7 days, 2 weeks)"
+                        className="input text-xs"
+                        value={newFuTimeframe}
+                        onChange={(e) => setNewFuTimeframe(e.target.value)}
+                        required
+                      />
+                      <input
+                        type="text"
+                        placeholder="Target Provider / Clinic (Optional)"
+                        className="input text-xs"
+                        value={newFuProvider}
+                        onChange={(e) => setNewFuProvider(e.target.value)}
+                      />
+                    </div>
+                    <textarea
+                      rows={2}
+                      placeholder="Specific follow-up instructions, required repeat labs, and warning signs..."
+                      className="input text-xs w-full"
+                      value={newFuInstructions}
+                      onChange={(e) => setNewFuInstructions(e.target.value)}
+                      required
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={addingFu || !newFuInstructions.trim()}
+                        className="btn-secondary text-xs"
+                      >
+                        {addingFu ? "Saving..." : "+ Add Follow-Up Plan"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="card p-12 text-center text-sm text-navy-900/50">
@@ -838,6 +1557,40 @@ export default function DoctorDashboard() {
           </div>
         )}
       </div>
+
+      {/* Discharge Summary Rejection Modal */}
+      {dischargeRejectionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/50 p-4 backdrop-blur-sm">
+          <div className="card w-full max-w-md p-6 space-y-4">
+            <h3 className="font-display text-base font-bold text-rose-900">
+              Reject Discharge Summary Draft
+            </h3>
+            <p className="text-xs text-navy-900/60">
+              Provide clinical justification for rejecting this discharge draft (e.g. Missing post-procedure vitals or inaccurate follow-up instructions).
+            </p>
+            <textarea
+              className="input text-xs w-full"
+              rows={3}
+              placeholder="Reason for rejection (required)..."
+              value={dischargeRejectionReason}
+              onChange={(e) => setDischargeRejectionReason(e.target.value)}
+              required
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setDischargeRejectionModal(false)} className="btn-secondary text-xs">
+                Cancel
+              </button>
+              <button
+                onClick={handleRejectDischarge}
+                disabled={!dischargeRejectionReason.trim() || approvingDischarge}
+                className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+              >
+                Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Clarification Response Modal */}
       {clarificationModal && (

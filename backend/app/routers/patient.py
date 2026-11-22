@@ -9,8 +9,12 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import (
     ClinicalProvenance,
+    DischargeSummary,
     EmergencyCase,
+    EmergencyOutcome,
+    FollowUpPlan,
     MedicalReport,
+    MedicationReconciliation,
     Patient,
     PatientClinicalFact,
     User,
@@ -322,6 +326,86 @@ def get_health_timeline(
             "metadata": {"case_id": ec.id, "emergency_type": ec.emergency_type, "status": ec.status},
         })
 
+    # 4. Approved Discharge Summaries (Prompt 10)
+    summaries = (
+        db.query(DischargeSummary)
+        .filter(DischargeSummary.patient_id == p.id, DischargeSummary.is_current_approved == True)
+        .all()
+    )
+    for ds in summaries:
+        hosp_name = ds.hospital.name if ds.hospital else "Hospital"
+        events.append({
+            "id": f"discharge-{ds.id}",
+            "event_type": "DISCHARGE_SUMMARY",
+            "title": f"Hospital Discharge: {ds.primary_diagnosis or 'Summary'}",
+            "description": f"Discharged from {hosp_name}. Condition: {ds.discharge_condition or 'Stable'}.",
+            "event_date": ds.discharge_date or (ds.approved_at.date().isoformat() if ds.approved_at else None),
+            "recorded_at": ds.approved_at.isoformat() if ds.approved_at else (ds.created_at.isoformat() if ds.created_at else ""),
+            "source_reference": f"Discharge Summary v{ds.version} (Case #{ds.emergency_case_id})",
+            "provenance_source": "DOCTOR_VERIFIED",
+            "verification_status": "VERIFIED",
+            "has_supporting_document": ds.source_report_id is not None,
+            "report_id": ds.source_report_id,
+            "metadata": {
+                "summary_id": ds.id,
+                "case_id": ds.emergency_case_id,
+                "primary_diagnosis": ds.primary_diagnosis,
+                "discharge_condition": ds.discharge_condition,
+            },
+        })
+
+    # 5. Clinician-Verified Medication Reconciliation (Prompt 10)
+    med_recs = (
+        db.query(MedicationReconciliation)
+        .filter(
+            MedicationReconciliation.patient_id == p.id,
+            MedicationReconciliation.verification_status == "CLINICIAN_VERIFIED",
+        )
+        .all()
+    )
+    for mr in med_recs:
+        rec_date = mr.verified_at.date().isoformat() if mr.verified_at else mr.created_at.date().isoformat()
+        events.append({
+            "id": f"medrec-{mr.id}",
+            "event_type": "MEDICATION_RECONCILED",
+            "title": f"Medication {mr.reconciliation_status}: {mr.medication_name}",
+            "description": f"Dosage: {mr.dosage or 'standard'}, Frequency: {mr.frequency or 'daily'}. Reason: {mr.clinical_reason or 'Emergency discharge reconciliation'}.",
+            "event_date": rec_date,
+            "recorded_at": mr.verified_at.isoformat() if mr.verified_at else mr.created_at.isoformat(),
+            "source_reference": f"Medication Reconciliation (Case #{mr.emergency_case_id})",
+            "provenance_source": "DOCTOR_VERIFIED",
+            "verification_status": "VERIFIED",
+            "has_supporting_document": False,
+            "report_id": None,
+            "metadata": {
+                "medication_name": mr.medication_name,
+                "dosage": mr.dosage,
+                "status": mr.reconciliation_status,
+            },
+        })
+
+    # 6. Longitudinal Follow-Up Plans (Prompt 10)
+    follow_ups = (
+        db.query(FollowUpPlan)
+        .filter(FollowUpPlan.patient_id == p.id)
+        .all()
+    )
+    for fu in follow_ups:
+        events.append({
+            "id": f"followup-{fu.id}",
+            "event_type": "FOLLOW_UP_PLAN",
+            "title": f"Follow-Up: {fu.specialty} ({fu.status})",
+            "description": f"Instructions: {fu.instructions}. Scheduled: {fu.scheduled_date or 'To be scheduled'}.",
+            "event_date": fu.scheduled_date or (fu.created_at.date().isoformat() if fu.created_at else None),
+            "recorded_at": fu.created_at.isoformat() if fu.created_at else "",
+            "source_reference": f"Follow-Up Plan #{fu.id} (Case #{fu.emergency_case_id})",
+            "provenance_source": "HOSPITAL_IMPORTED",
+            "verification_status": "REVIEWED" if fu.verified_by_user_id else "UNVERIFIED",
+            "has_supporting_document": False,
+            "report_id": None,
+            "metadata": {"specialty": fu.specialty, "status": fu.status, "scheduled_date": fu.scheduled_date},
+        })
+
     # Sort newest date first safely
     def sort_key(ev):
         return ev.get("event_date") or ev.get("recorded_at") or ""
@@ -336,6 +420,180 @@ def get_health_timeline(
         "limit": limit,
         "offset": offset,
     }
+
+
+# --- Prompt 10: Patient Post-Emergency History & Continuity APIs ---
+
+@router.get("/patient/emergency-history")
+def get_emergency_history(
+    user: User = Depends(require_roles("patient")),
+    db: Session = Depends(get_db),
+):
+    """Retrieves full longitudinal emergency encounter history for the authenticated patient."""
+    p = _own(db, user)
+    cases = (
+        db.query(EmergencyCase)
+        .filter(EmergencyCase.patient_id == p.id)
+        .order_by(EmergencyCase.created_at.desc())
+        .all()
+    )
+
+    items = []
+    for c in cases:
+        # Latest active outcome
+        outcome = (
+            db.query(EmergencyOutcome)
+            .filter(EmergencyOutcome.emergency_case_id == c.id)
+            .order_by(EmergencyOutcome.version.desc())
+            .first()
+        )
+        # Approved discharge summary
+        ds = (
+            db.query(DischargeSummary)
+            .filter(DischargeSummary.emergency_case_id == c.id, DischargeSummary.is_current_approved == True)
+            .first()
+        )
+        if not ds:
+            ds = (
+                db.query(DischargeSummary)
+                .filter(DischargeSummary.emergency_case_id == c.id)
+                .order_by(DischargeSummary.version.desc())
+                .first()
+            )
+
+        fu_count = db.query(FollowUpPlan).filter(FollowUpPlan.emergency_case_id == c.id).count()
+        med_count = db.query(MedicationReconciliation).filter(MedicationReconciliation.emergency_case_id == c.id).count()
+
+        items.append({
+            "case_id": c.id,
+            "emergency_type": c.emergency_type,
+            "status": c.status,
+            "priority": c.priority,
+            "created_at": c.created_at,
+            "completed_at": c.completed_at,
+            "hospital_id": c.hospital_id,
+            "hospital_name": c.hospital.name if c.hospital else None,
+            "hospital_address": c.hospital.address if c.hospital else None,
+            "outcome": {
+                "id": outcome.id,
+                "disposition": outcome.disposition,
+                "disposition_notes": outcome.disposition_notes,
+                "outcome_at": outcome.outcome_at,
+                "verification_status": outcome.verification_status,
+                "version": outcome.version,
+            } if outcome else None,
+            "discharge_summary": {
+                "id": ds.id,
+                "version": ds.version,
+                "status": ds.status,
+                "primary_diagnosis": ds.primary_diagnosis,
+                "discharge_condition": ds.discharge_condition,
+                "discharge_date": ds.discharge_date,
+                "precautions": ds.precautions or [],
+                "is_current_approved": ds.is_current_approved,
+            } if ds else None,
+            "follow_up_count": fu_count,
+            "medication_count": med_count,
+        })
+    return items
+
+
+@router.get("/patient/discharge-summaries")
+def get_patient_discharge_summaries(
+    user: User = Depends(require_roles("patient")),
+    db: Session = Depends(get_db),
+):
+    """Retrieves all approved discharge summaries for the authenticated patient."""
+    p = _own(db, user)
+    summaries = (
+        db.query(DischargeSummary)
+        .filter(DischargeSummary.patient_id == p.id, DischargeSummary.is_current_approved == True)
+        .order_by(DischargeSummary.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "emergency_case_id": s.emergency_case_id,
+            "hospital_id": s.hospital_id,
+            "hospital_name": s.hospital.name if s.hospital else None,
+            "version": s.version,
+            "status": s.status,
+            "admission_date": s.admission_date,
+            "discharge_date": s.discharge_date,
+            "primary_diagnosis": s.primary_diagnosis,
+            "secondary_diagnoses": s.secondary_diagnoses or [],
+            "procedures_performed": s.procedures_performed or [],
+            "clinical_course": s.clinical_course,
+            "discharge_condition": s.discharge_condition,
+            "precautions": s.precautions or [],
+            "summary_data": s.summary_data,
+            "approved_at": s.approved_at,
+            "approval_notes": s.approval_notes,
+        }
+        for s in summaries
+    ]
+
+
+@router.get("/patient/medication-reconciliation")
+def get_patient_medications(
+    user: User = Depends(require_roles("patient")),
+    db: Session = Depends(get_db),
+):
+    """Retrieves all verified medication reconciliation records for the authenticated patient."""
+    p = _own(db, user)
+    meds = (
+        db.query(MedicationReconciliation)
+        .filter(MedicationReconciliation.patient_id == p.id, MedicationReconciliation.verification_status == "CLINICIAN_VERIFIED")
+        .order_by(MedicationReconciliation.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": m.id,
+            "emergency_case_id": m.emergency_case_id,
+            "hospital_name": m.hospital.name if m.hospital else None,
+            "medication_name": m.medication_name,
+            "dosage": m.dosage,
+            "route": m.route,
+            "frequency": m.frequency,
+            "reconciliation_status": m.reconciliation_status,
+            "clinical_reason": m.clinical_reason,
+            "verification_status": m.verification_status,
+            "verified_at": m.verified_at,
+        }
+        for m in meds
+    ]
+
+
+@router.get("/patient/follow-ups")
+def get_patient_follow_ups(
+    user: User = Depends(require_roles("patient")),
+    db: Session = Depends(get_db),
+):
+    """Retrieves all documented follow-up instructions and plans for the authenticated patient."""
+    p = _own(db, user)
+    plans = (
+        db.query(FollowUpPlan)
+        .filter(FollowUpPlan.patient_id == p.id)
+        .order_by(FollowUpPlan.scheduled_date.asc(), FollowUpPlan.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": f.id,
+            "emergency_case_id": f.emergency_case_id,
+            "hospital_name": f.hospital.name if f.hospital else None,
+            "department_name": f.department.department_name if f.department else None,
+            "specialty": f.specialty,
+            "scheduled_date": f.scheduled_date,
+            "instructions": f.instructions,
+            "status": f.status,
+            "completion_notes": f.completion_notes,
+            "completed_at": f.completed_at,
+        }
+        for f in plans
+    ]
 
 
 # --- Medical Report APIs ---

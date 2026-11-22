@@ -12,6 +12,11 @@ import {
   PatientProfile,
   ReportSummary,
   TimelineEntry,
+  postEmergencyApi,
+  EmergencyHistoryItem,
+  DischargeSummary,
+  MedicationReconciliationItem,
+  FollowUpPlanItem,
 } from "../lib/api";
 import { useEmergencyEvents } from "../lib/ws";
 import { TYPE_LABEL, priorityLabel, timeAgo } from "../lib/format";
@@ -21,7 +26,7 @@ import SummaryCard from "../components/SummaryCard";
 import ChecklistCard from "../components/ChecklistCard";
 import Banner from "../components/Banner";
 
-type Tab = "sos" | "vault" | "facts" | "timeline" | "reports" | "profile";
+type Tab = "sos" | "vault" | "facts" | "timeline" | "reports" | "continuity" | "profile";
 const TYPES: EmergencyType[] = ["stroke", "cardiac", "trauma", "diabetic", "accident", "other"];
 
 export default function PatientHome() {
@@ -67,6 +72,7 @@ export default function PatientHome() {
               { id: "facts", label: "Clinical Facts" },
               { id: "timeline", label: "Health Timeline" },
               { id: "reports", label: "Medical Reports" },
+              { id: "continuity", label: "Care Continuity & Records" },
               { id: "profile", label: "Profile & Consent" },
               { id: "sos", label: "SOS Station" },
             ].map((t) => (
@@ -86,6 +92,7 @@ export default function PatientHome() {
           {tab === "facts" && <ClinicalFactsPanel />}
           {tab === "timeline" && <HealthTimelinePanel />}
           {tab === "reports" && <ReportsPanel />}
+          {tab === "continuity" && <CareContinuityPanel />}
           {tab === "profile" && <ProfilePanel />}
           {tab === "sos" && <SosPanel onCreated={refresh} />}
         </>
@@ -1029,6 +1036,341 @@ function ActiveEmergency({ c, onChange }: { c: CaseDetail; onChange: () => void 
       <button onClick={onChange} className="btn-secondary w-full">
         Refresh Status
       </button>
+    </div>
+  );
+}
+
+// --- Tab 7: Care Continuity & Records (Prompt 10) ---
+function CareContinuityPanel() {
+  const [history, setHistory] = useState<EmergencyHistoryItem[]>([]);
+  const [summaries, setSummaries] = useState<DischargeSummary[]>([]);
+  const [medications, setMedications] = useState<MedicationReconciliationItem[]>([]);
+  const [followUps, setFollowUps] = useState<FollowUpPlanItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [schedulingPlanId, setSchedulingPlanId] = useState<number | null>(null);
+  const [scheduledDateInput, setScheduledDateInput] = useState("");
+  const [updatingPlan, setUpdatingPlan] = useState(false);
+
+  const loadData = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      postEmergencyApi.getPatientEmergencyHistory().catch(() => []),
+      postEmergencyApi.getPatientDischargeSummaries().catch(() => []),
+      postEmergencyApi.getPatientMedications().catch(() => []),
+      postEmergencyApi.getPatientFollowUps().catch(() => []),
+    ]).then(([h, s, m, f]) => {
+      setHistory(h);
+      setSummaries(s);
+      setMedications(m);
+      setFollowUps(f);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(loadData, [loadData]);
+
+  async function handleScheduleSubmit(planId: number) {
+    if (!scheduledDateInput) return;
+    setUpdatingPlan(true);
+    try {
+      await postEmergencyApi.updateFollowUpStatus(planId, {
+        status: "SCHEDULED",
+        scheduled_date: scheduledDateInput,
+      });
+      setSchedulingPlanId(null);
+      setScheduledDateInput("");
+      loadData();
+    } catch (err: any) {
+      alert(err.message || "Failed to update appointment date");
+    } finally {
+      setUpdatingPlan(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="card p-8 text-center text-xs text-navy-900/50">Loading post-emergency continuity records...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* 1. Emergency Encounters & Outcomes */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h3 className="font-display text-base font-bold text-navy-900">
+            Emergency Care History & Outcomes
+          </h3>
+          <p className="text-xs text-navy-900/60">
+            Chronological log of past emergency episodes, treating hospitals, and documented clinical dispositions.
+          </p>
+        </div>
+
+        {history.length > 0 ? (
+          <div className="space-y-3">
+            {history.map((h) => (
+              <div key={h.case_id} className="rounded-lg bg-navy-900/[0.02] p-4 border border-navy-900/10 space-y-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-navy-900 text-sm">
+                      {TYPE_LABEL[h.emergency_type] || h.emergency_type}
+                    </span>
+                    <span className="text-[11px] text-navy-900/50">Emergency #{h.case_id}</span>
+                  </div>
+                  {h.outcome ? (
+                    <span className={`pill text-[10px] font-bold ${
+                      h.outcome.disposition === "DISCHARGED"
+                        ? "bg-teal-100 text-teal-900"
+                        : h.outcome.disposition === "ADMITTED"
+                        ? "bg-indigo-100 text-indigo-900"
+                        : "bg-amber-100 text-amber-900"
+                    }`}>
+                      {h.outcome.disposition}
+                    </span>
+                  ) : (
+                    <span className="pill bg-navy-900/10 text-navy-900/70 text-[10px]">Active Emergency</span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-navy-900/80">
+                  <p><span className="font-semibold text-navy-900/60 uppercase text-[10px] block">Treating Hospital</span>{h.hospital_name || "Emergency Department"} {h.hospital_address ? `(${h.hospital_address})` : ""}</p>
+                  <p><span className="font-semibold text-navy-900/60 uppercase text-[10px] block">Date & Time</span>{new Date(h.created_at).toLocaleString()}</p>
+                </div>
+
+                {h.outcome && (
+                  <div className="pt-2 border-t border-navy-900/5">
+                    <span className="font-semibold text-navy-900/60 uppercase text-[10px] block">Clinical Disposition Notes</span>
+                    <p className="text-navy-900 mt-0.5">{h.outcome.disposition_notes}</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-navy-900/50 italic py-2">
+            No past emergency episodes recorded for your profile.
+          </p>
+        )}
+      </div>
+
+      {/* 2. Clinically Approved Discharge Summaries */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h3 className="font-display text-base font-bold text-navy-900">
+            Approved Hospital Discharge Summaries
+          </h3>
+          <p className="text-xs text-navy-900/60">
+            Physician-signed evidence summaries synthesizing diagnoses, clinical course, and precautions.
+          </p>
+        </div>
+
+        {summaries.length > 0 ? (
+          <div className="space-y-4">
+            {summaries.map((s) => (
+              <div key={s.id} className="rounded-lg bg-teal-50/40 p-5 border border-teal-200/70 space-y-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-200/50 pb-2">
+                  <div>
+                    <span className="font-bold text-teal-950 text-sm">{s.primary_diagnosis}</span>
+                    <p className="text-[11px] text-teal-900/70">
+                      Discharged on {s.discharge_date} · Hospital: {s.hospital_name || "Treating Facility"}
+                    </p>
+                  </div>
+                  <span className="pill bg-teal-100 text-teal-900 font-bold text-[10px]">
+                    ✓ Clinician Approved (v{s.version})
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-navy-900">
+                  <div>
+                    <span className="font-bold text-navy-900/60 uppercase text-[10px] block">Discharge Condition</span>
+                    <p className="mt-0.5 font-medium">{s.discharge_condition}</p>
+
+                    <span className="font-bold text-navy-900/60 uppercase text-[10px] block pt-2">Clinical Course Summary</span>
+                    <p className="mt-0.5 text-navy-900/80 leading-relaxed">{s.clinical_course}</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {s.precautions && s.precautions.length > 0 && (
+                      <div>
+                        <span className="font-bold text-navy-900/60 uppercase text-[10px] block">Precautions & Red Flags</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {s.precautions.map((p, idx) => (
+                            <span key={idx} className="rounded bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800 border border-rose-200">
+                              ⚠️ {p}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {s.follow_up_instructions && (
+                      <div>
+                        <span className="font-bold text-navy-900/60 uppercase text-[10px] block">Doctor's Follow-up Instructions</span>
+                        <p className="mt-0.5 text-navy-900/80">{s.follow_up_instructions}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Evidence Disclaimer */}
+                <div className="rounded bg-white/70 p-2.5 border border-teal-200/50 text-[10px] text-teal-900">
+                  <span className="font-bold uppercase tracking-wider text-teal-800">Clinical Governance Notice: </span>
+                  {s.non_diagnostic_disclaimer}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-navy-900/50 italic py-2">
+            No approved discharge summaries on file.
+          </p>
+        )}
+      </div>
+
+      {/* 3. Reconciled Medications */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h3 className="font-display text-base font-bold text-navy-900">
+            Reconciled Medications
+          </h3>
+          <p className="text-xs text-navy-900/60">
+            Verified medication changes from hospital release. Reconciled medications are promoted to your longitudinal health record.
+          </p>
+        </div>
+
+        {medications.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-navy-900/10 text-[10px] uppercase font-bold text-navy-900/60">
+                  <th className="py-2">Medication</th>
+                  <th className="py-2">Dosage</th>
+                  <th className="py-2">Frequency</th>
+                  <th className="py-2">Action</th>
+                  <th className="py-2">Indication</th>
+                  <th className="py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-navy-900/5">
+                {medications.map((m) => (
+                  <tr key={m.id} className="hover:bg-navy-900/[0.01]">
+                    <td className="py-2.5 font-semibold text-navy-900">{m.medication_name}</td>
+                    <td className="py-2.5 text-navy-900/70">{m.dosage}</td>
+                    <td className="py-2.5 text-navy-900/70">{m.frequency}</td>
+                    <td className="py-2.5">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                        m.action === "START"
+                          ? "bg-teal-100 text-teal-800"
+                          : m.action === "STOP"
+                          ? "bg-rose-100 text-rose-800"
+                          : m.action === "CHANGE"
+                          ? "bg-purple-100 text-purple-800"
+                          : "bg-blue-100 text-blue-800"
+                      }`}>
+                        {m.action}
+                      </span>
+                    </td>
+                    <td className="py-2.5 text-navy-900/60">{m.clinical_indication || "—"}</td>
+                    <td className="py-2.5">
+                      <span className="text-[10px] font-semibold text-teal-800">
+                        ✓ {m.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-navy-900/50 italic py-2">
+            No reconciled medications documented yet.
+          </p>
+        )}
+      </div>
+
+      {/* 4. Longitudinal Follow-Up Appointments */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h3 className="font-display text-base font-bold text-navy-900">
+            Scheduled Follow-Up Care Plans
+          </h3>
+          <p className="text-xs text-navy-900/60">
+            Structured follow-up appointments and specialist consultations recommended by your treating physicians.
+          </p>
+        </div>
+
+        {followUps.length > 0 ? (
+          <div className="space-y-3">
+            {followUps.map((f) => (
+              <div key={f.id} className="rounded-lg bg-navy-900/[0.02] p-4 border border-navy-900/10 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-navy-900 text-sm">{f.specialty}</span>
+                    <span className="pill bg-indigo-50 text-indigo-800 text-[10px]">{f.timeframe}</span>
+                    <span className={`pill text-[10px] font-semibold ${
+                      f.status === "COMPLETED"
+                        ? "bg-teal-100 text-teal-900"
+                        : f.status === "SCHEDULED"
+                        ? "bg-blue-100 text-blue-900"
+                        : "bg-amber-100 text-amber-900"
+                    }`}>
+                      {f.status}
+                    </span>
+                  </div>
+                  <p className="text-navy-900/80">{f.instructions}</p>
+                  {f.provider_name && <p className="text-navy-900/50 text-[11px]">Recommended Clinic/Provider: {f.provider_name}</p>}
+                  {f.scheduled_date && (
+                    <p className="text-teal-800 font-semibold text-[11px]">
+                      🗓 Confirmed Appointment Date: {f.scheduled_date}
+                    </p>
+                  )}
+                </div>
+
+                <div className="shrink-0">
+                  {f.status === "PLANNED" && (
+                    <div>
+                      {schedulingPlanId === f.id ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            className="input text-xs"
+                            value={scheduledDateInput}
+                            onChange={(e) => setScheduledDateInput(e.target.value)}
+                          />
+                          <button
+                            onClick={() => handleScheduleSubmit(f.id)}
+                            disabled={updatingPlan || !scheduledDateInput}
+                            className="btn-primary text-xs"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setSchedulingPlanId(null)}
+                            className="btn-secondary text-xs"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setSchedulingPlanId(f.id);
+                            setScheduledDateInput(f.scheduled_date || "");
+                          }}
+                          className="btn-secondary text-xs"
+                        >
+                          📅 Set Appointment Date
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-navy-900/50 italic py-2">
+            No scheduled follow-up plans at this time.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

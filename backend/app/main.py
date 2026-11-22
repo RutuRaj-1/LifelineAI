@@ -17,6 +17,7 @@ from .routers import (
     hospital_registry,
     notifications,
     patient,
+    post_emergency,
     referrals,
     scenarios,
 )
@@ -76,6 +77,8 @@ for r in (
     notifications.router,
     referrals.router,
     scenarios.router,
+    post_emergency.router,
+    post_emergency.follow_up_router,
 ):
     app.include_router(r, prefix="/api")
 app.include_router(ws_router)  # /ws (unprefixed - kept at root for simple reverse-proxy rules)
