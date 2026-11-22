@@ -149,3 +149,61 @@ export interface HealthVaultOverview {
     disclaimer: string;
   };
 }
+
+export interface HospitalProfile {
+  id: number;
+  name: string;
+  address: string;
+  city: string;
+  phone?: string | null;
+  lat: number;
+  lng: number;
+  status: "DRAFT" | "SUBMITTED" | "UNDER_REVIEW" | "VERIFIED" | "REJECTED" | "SUSPENDED" | "INACTIVE";
+  hospital_type: string;
+  contact_email?: string | null;
+  verification_notes?: string | null;
+  verified_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  department_count: number;
+  capability_count: number;
+}
+
+export interface HospitalDepartment {
+  id: number;
+  hospital_id: number;
+  department_name: string;
+  department_code: string;
+  description?: string | null;
+  operational_status: "ACTIVE" | "INACTIVE" | "LIMITED";
+  contact_information?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface HospitalCapability {
+  id: number;
+  hospital_id: number;
+  department_id?: number | null;
+  department_name?: string | null;
+  capability_code: string;
+  capability_name: string;
+  capability_category: string;
+  description?: string | null;
+  availability_mode: "24_7" | "ON_CALL" | "BUSINESS_HOURS" | "CONDITIONAL";
+  verification_status: "UNVERIFIED" | "PENDING_REVIEW" | "REVIEWED" | "VERIFIED" | "REJECTED" | "SUPERSEDED" | "SUSPENDED";
+  verified_by_user_id?: number | null;
+  verified_at?: string | null;
+  verification_notes?: string | null;
+  verification_source?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface HospitalRegistryResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  items: HospitalProfile[];
+  disclaimer: string;
+}

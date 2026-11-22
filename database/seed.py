@@ -190,7 +190,9 @@ def seed_domain_extensions(db) -> None:
                     capability_category=category,
                     availability_mode=mode,
                     description=f"{desc} (SYNTHETIC / DEMO)",
-                    verification_status="VERIFIED",
+                    verification_status="VERIFIED" if h.id != 3 or cap_code != "STROKE_THROMBOLYSIS" else "PENDING_REVIEW",
+                    verification_source="STATE_REGISTRY" if (h.id != 3 or cap_code != "STROKE_THROMBOLYSIS") else "HOSPITAL_PORTAL_SUBMISSION",
+                    verification_notes="Synthetic baseline registry entry" if (h.id != 3 or cap_code != "STROKE_THROMBOLYSIS") else "Submitted by hospital staff; pending review.",
                 )
                 db.add(cap)
         db.flush()
@@ -380,8 +382,18 @@ def main() -> None:
     if db.query(User).count() == 0:
         hospitals = []
         for h in HOSPITALS:
-            row = Hospital(name=h["name"], address=h["address"], city=h["city"], lat=h["lat"], lng=h["lng"],
-                           phone=h["phone"], capabilities=h["capabilities"])
+            row = Hospital(
+                name=h["name"],
+                address=h["address"],
+                city=h["city"],
+                lat=h["lat"],
+                lng=h["lng"],
+                phone=h["phone"],
+                capabilities=h["capabilities"],
+                status="VERIFIED",
+                hospital_type="TERTIARY_CARE" if ("Deenanath" in h["name"] or "Ruby" in h["name"]) else "GENERAL",
+                contact_email=f"desk@{h['name'].lower().replace(' ', '').replace('-', '')[:10]}.demo",
+            )
             db.add(row)
             db.flush()
             for rtype, total in h["resources"].items():
@@ -423,6 +435,10 @@ def main() -> None:
         # First family member, linked to patient 1, for demoing the Family Portal
         db.add(User(email="family1@lifeline.demo", password_hash=hash_password("Family@123"), full_name="Meera Iyer",
                    role="family", linked_patient_id=patients[0].id))
+
+        # Administrative reviewer user for reviewing and verifying hospital capability claims
+        db.add(User(email="admin@lifeline.demo", password_hash=hash_password("Admin@123"), full_name="State Health Reviewer",
+                   role="admin"))
 
         # 50 medical reports across the 10 patients (5 each, one of each template type)
         today = date.today()

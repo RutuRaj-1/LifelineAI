@@ -383,3 +383,28 @@ Prompt 04 establishes the Pre-Emergency Patient Intelligence layer, transforming
 - **Backend Tests:** **31/31 passed** (26 previous + 5 new integration tests in `backend/tests/test_patient_intelligence.py` covering health vault aggregation, clinical facts lifecycle, provenance immutability, longitudinal timeline, and cross-patient isolation).
 - **Frontend Build:** `tsc -b && vite build` succeeded with 0 errors (production bundle: 238.76 kB).
 - **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
+
+---
+
+## 13. Prompt 05 Implementation — Hospital Registry, Department Hierarchy & Clinical Capability Management
+
+### 13.1 Objective & Architectural Scope
+Prompt 05 implements the authoritative Hospital Registry, Department Hierarchy, and Clinical Capability Lifecycle foundation:
+- **Core Principle Maintained:** Move information before the patient, not after. Registered capabilities establish institutional service readiness claims without conflating them with live staffed bed or equipment availability (reserved for Prompt 06).
+- **Hospital Registry Lifecycle (`hospitals`):** Added status lifecycle (`DRAFT`, `SUBMITTED`, `UNDER_REVIEW`, `VERIFIED`, `REJECTED`, `SUSPENDED`, `INACTIVE`), hospital type classification, emergency contact credentials, and reviewer verification metadata.
+- **Department Hierarchy (`hospital_departments`):** Maintained strict `UNIQUE(hospital_id, department_code)` constraint; allowed identical codes across different institutions; implemented soft-deactivation (`operational_status="INACTIVE"`) preserving historical resource links.
+- **Clinical Capability Management (`hospital_capabilities`):** Maintained `UNIQUE(hospital_id, capability_code)` constraint; enforced department ownership checks; implemented verification lifecycle (`UNVERIFIED` -> `PENDING_REVIEW` -> `VERIFIED` / `REJECTED`).
+- **Administrative Review & Verification (`/api/admin/...`):** Role-protected administrative review workspace enabling authorized state reviewers to inspect submitted hospital profiles and clinical capabilities, approving or rejecting with auditable rationale.
+- **Public Hospital Discovery (`/api/hospitals`):** Public-facing discovery endpoints returning only verified hospital records, active departments, and verified capabilities with explicit safety disclaimers.
+- **Alembic Migration `003_hospital_registry_lifecycle`:** Created clean forward/backward migration adding metadata columns with SQLite/PostgreSQL batch alter table compatibility.
+- **Frontend Hospital Workspace Upgrade (`HospitalDashboard.tsx`):**
+  1. *Emergency Queue*: Preserved active incoming patient monitoring, ETA tracking, and triage checklists.
+  2. *Hospital Profile*: Institution details, verification badge, inline edit form, and submission action.
+  3. *Department Workspace*: Department list, operational status badges, and inline creation modal.
+  4. *Clinical Capabilities*: Category filtering, availability mode indicators, verification status badges, registration modal, and review submission triggers.
+
+### 13.2 Automated Verification Matrix
+- **Backend Tests:** **36/36 passed** (31 previous + 5 new integration tests in `backend/tests/test_hospital_registry.py` covering public registry discovery, hospital profile submission, department hierarchy constraints, capability verification lifecycle, and RBAC security boundaries).
+- **Alembic Migration Verification:** Full migration chain `001 -> 002 -> 003 -> 001 -> base -> head` verified in `backend/tests/test_migrations.py`.
+- **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 258.13 kB).
+- **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.

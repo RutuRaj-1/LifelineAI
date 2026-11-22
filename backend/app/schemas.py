@@ -6,9 +6,11 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 EmergencyType = Literal["stroke", "cardiac", "trauma", "diabetic", "accident", "other"]
 
 DepartmentStatus = Literal["ACTIVE", "INACTIVE", "LIMITED"]
-CapabilityCategory = Literal["DIAGNOSTIC", "SURGICAL", "CRITICAL_CARE", "STABILIZATION", "OTHER"]
+CapabilityCategory = str
+HospitalStatus = Literal["DRAFT", "SUBMITTED", "UNDER_REVIEW", "VERIFIED", "REJECTED", "SUSPENDED", "INACTIVE"]
+HospitalType = Literal["GENERAL", "TERTIARY_CARE", "TRAUMA_CENTER", "SPECIALTY", "COMMUNITY", "OTHER"]
 CapabilityAvailability = Literal["24_7", "ON_CALL", "BUSINESS_HOURS", "CONDITIONAL"]
-VerificationStatus = Literal["UNVERIFIED", "REVIEWED", "VERIFIED", "REJECTED", "SUPERSEDED", "SUSPENDED"]
+VerificationStatus = Literal["UNVERIFIED", "PENDING_REVIEW", "REVIEWED", "VERIFIED", "REJECTED", "SUPERSEDED", "SUSPENDED", "EXPIRED"]
 ResourceOperationalStatus = Literal["FUNCTIONAL", "LIMITED", "MAINTENANCE", "NON_OPERATIONAL", "UNSTAFFED", "UNKNOWN"]
 SpecialistStatus = Literal["AVAILABLE", "ON_CALL", "BUSY", "OFF_DUTY", "UNAVAILABLE", "UNKNOWN"]
 FactType = Literal["CONDITION", "ALLERGY", "MEDICATION", "SURGERY", "DEVICE", "RISK", "OTHER"]
@@ -115,6 +117,36 @@ class ChecklistIn(BaseModel):
 
 # --- Prompt 03: Domain Schemas ---
 
+# Hospital Registry & Profile Schemas
+class HospitalOut(BaseModel):
+    id: int
+    name: str
+    address: str
+    city: str
+    phone: str | None = None
+    lat: float
+    lng: float
+    status: HospitalStatus = "VERIFIED"
+    hospital_type: str = "GENERAL"
+    contact_email: str | None = None
+    verification_notes: str | None = None
+    verified_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    department_count: int = 0
+    capability_count: int = 0
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HospitalProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=160)
+    address: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=80)
+    phone: str | None = Field(default=None, max_length=30)
+    contact_email: EmailStr | None = None
+    hospital_type: str | None = Field(default=None, max_length=50)
+
+
 # Hospital Department Schemas
 class HospitalDepartmentBase(BaseModel):
     department_name: str = Field(min_length=2, max_length=120)
@@ -126,6 +158,21 @@ class HospitalDepartmentBase(BaseModel):
 
 class HospitalDepartmentCreate(HospitalDepartmentBase):
     hospital_id: int
+
+
+class HospitalDepartmentUserCreate(BaseModel):
+    department_name: str = Field(min_length=2, max_length=120)
+    department_code: str = Field(min_length=2, max_length=40)
+    description: str | None = None
+    operational_status: DepartmentStatus = "ACTIVE"
+    contact_information: str | None = Field(default=None, max_length=100)
+
+
+class HospitalDepartmentUpdate(BaseModel):
+    department_name: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = None
+    operational_status: DepartmentStatus | None = None
+    contact_information: str | None = Field(default=None, max_length=100)
 
 
 class HospitalDepartmentOut(HospitalDepartmentBase):
@@ -151,12 +198,36 @@ class HospitalCapabilityCreate(HospitalCapabilityBase):
     department_id: int | None = None
 
 
+class HospitalCapabilityUserCreate(BaseModel):
+    capability_code: str = Field(min_length=2, max_length=60)
+    capability_name: str = Field(min_length=2, max_length=120)
+    capability_category: CapabilityCategory = "DIAGNOSTIC"
+    department_id: int | None = None
+    description: str | None = None
+    availability_mode: CapabilityAvailability = "24_7"
+
+
+class HospitalCapabilityUpdate(BaseModel):
+    capability_name: str | None = Field(default=None, min_length=2, max_length=120)
+    capability_category: CapabilityCategory | None = None
+    department_id: int | None = None
+    description: str | None = None
+    availability_mode: CapabilityAvailability | None = None
+
+
+class VerificationActionIn(BaseModel):
+    notes: str | None = None
+    verification_source: str | None = None
+
+
 class HospitalCapabilityOut(HospitalCapabilityBase):
     id: int
     hospital_id: int
     department_id: int | None = None
     verified_by_user_id: int | None = None
     verified_at: datetime | None = None
+    verification_notes: str | None = None
+    verification_source: str | None = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

@@ -7,7 +7,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import models  # noqa: F401 - registers models on Base.metadata
 from .config import get_settings
 from .db import Base, check_db_health, engine
-from .routers import ai_routes, auth, doctor, emergency, hospital, notifications, patient, scenarios
+from .routers import (
+    admin,
+    ai_routes,
+    auth,
+    doctor,
+    emergency,
+    hospital,
+    hospital_registry,
+    notifications,
+    patient,
+    scenarios,
+)
 from .ws import router as ws_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -52,7 +63,17 @@ def health():
     }
 
 
-for r in (auth.router, patient.router, emergency.router, doctor.router, hospital.router, ai_routes.router,
-         notifications.router, scenarios.router):
+for r in (
+    auth.router,
+    patient.router,
+    emergency.router,
+    doctor.router,
+    hospital.router,
+    hospital_registry.router,
+    admin.router,
+    ai_routes.router,
+    notifications.router,
+    scenarios.router,
+):
     app.include_router(r, prefix="/api")
 app.include_router(ws_router)  # /ws (unprefixed - kept at root for simple reverse-proxy rules)

@@ -6,6 +6,9 @@ from ..models import (
     ClinicalProvenance,
     Doctor,
     EmergencyCase,
+    Hospital,
+    HospitalCapability,
+    HospitalDepartment,
     MedicalReport,
     Patient,
     PatientClinicalFact,
@@ -89,6 +92,66 @@ def fact_dict(f: PatientClinicalFact) -> dict:
         "created_at": f.created_at.isoformat() if f.created_at else None,
         "updated_at": f.updated_at.isoformat() if f.updated_at else None,
         "provenance_records": [provenance_dict(pr) for pr in (f.provenance_records or [])],
+    }
+
+
+def hospital_dict(h: Hospital, detail: bool = False) -> dict:
+    d = {
+        "id": h.id,
+        "name": h.name,
+        "address": h.address,
+        "city": h.city,
+        "phone": h.phone,
+        "lat": h.lat,
+        "lng": h.lng,
+        "status": getattr(h, "status", "VERIFIED"),
+        "hospital_type": getattr(h, "hospital_type", "GENERAL"),
+        "contact_email": getattr(h, "contact_email", None),
+        "department_count": len(h.departments) if hasattr(h, "departments") and h.departments else 0,
+        "capability_count": len(h.capabilities_rel) if hasattr(h, "capabilities_rel") and h.capabilities_rel else 0,
+    }
+    if detail:
+        d.update({
+            "verification_notes": getattr(h, "verification_notes", None),
+            "verified_at": h.verified_at.isoformat() if getattr(h, "verified_at", None) else None,
+            "created_at": h.created_at.isoformat() if getattr(h, "created_at", None) else None,
+            "updated_at": h.updated_at.isoformat() if getattr(h, "updated_at", None) else None,
+        })
+    return d
+
+
+def department_dict(d: HospitalDepartment) -> dict:
+    return {
+        "id": d.id,
+        "hospital_id": d.hospital_id,
+        "department_name": d.department_name,
+        "department_code": d.department_code,
+        "description": d.description,
+        "operational_status": d.operational_status,
+        "contact_information": d.contact_information,
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+    }
+
+
+def capability_dict(c: HospitalCapability) -> dict:
+    return {
+        "id": c.id,
+        "hospital_id": c.hospital_id,
+        "department_id": c.department_id,
+        "department_name": c.department.department_name if c.department else None,
+        "capability_code": c.capability_code,
+        "capability_name": c.capability_name,
+        "capability_category": c.capability_category,
+        "description": c.description,
+        "availability_mode": c.availability_mode,
+        "verification_status": c.verification_status,
+        "verified_by_user_id": c.verified_by_user_id,
+        "verified_at": c.verified_at.isoformat() if c.verified_at else None,
+        "verification_notes": getattr(c, "verification_notes", None),
+        "verification_source": getattr(c, "verification_source", None),
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "updated_at": c.updated_at.isoformat() if c.updated_at else None,
     }
 
 

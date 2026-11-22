@@ -10,8 +10,17 @@ CREATE TABLE hospitals (
     lat DOUBLE PRECISION NOT NULL,
     lng DOUBLE PRECISION NOT NULL,
     phone VARCHAR(30),
-    capabilities JSONB DEFAULT '[]'
+    capabilities JSONB DEFAULT '[]',
+    status VARCHAR(30) NOT NULL DEFAULT 'VERIFIED',
+    hospital_type VARCHAR(50) NOT NULL DEFAULT 'GENERAL',
+    contact_email VARCHAR(120),
+    verification_notes TEXT,
+    verified_by_user_id INTEGER,
+    verified_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
 );
+CREATE INDEX ix_hospitals_status ON hospitals(status);
 
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
@@ -69,6 +78,8 @@ CREATE TABLE hospital_capabilities (
     verification_status VARCHAR(30) NOT NULL DEFAULT 'UNVERIFIED',
     verified_by_user_id INTEGER REFERENCES users(id),
     verified_at TIMESTAMPTZ,
+    verification_notes TEXT,
+    verification_source VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     CONSTRAINT uq_hospital_capability UNIQUE (hospital_id, capability_code)

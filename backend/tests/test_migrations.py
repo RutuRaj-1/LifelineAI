@@ -48,11 +48,19 @@ def test_alembic_upgrade_and_downgrade_full_chain():
         assert "hospital_departments" not in tables_001
         engine.dispose()
 
-        # 2. Upgrade to head (002_domain_model_evolution)
+        # 2. Upgrade to head (003_hospital_registry_lifecycle)
         command.upgrade(cfg, "head")
         engine2 = create_engine(db_url)
-        tables_head = set(inspect(engine2).get_table_names())
+        insp2 = inspect(engine2)
+        tables_head = set(insp2.get_table_names())
         assert EXPECTED_DOMAIN_TABLES.issubset(tables_head)
+        h_cols = {c["name"] for c in insp2.get_columns("hospitals")}
+        assert "status" in h_cols
+        assert "hospital_type" in h_cols
+        assert "contact_email" in h_cols
+        cap_cols = {c["name"] for c in insp2.get_columns("hospital_capabilities")}
+        assert "verification_notes" in cap_cols
+        assert "verification_source" in cap_cols
         engine2.dispose()
 
         # 3. Downgrade back to 001_initial_schema

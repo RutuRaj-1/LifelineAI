@@ -56,7 +56,19 @@ class Hospital(Base):
     lng: Mapped[float] = mapped_column(Float)
     phone: Mapped[str | None] = mapped_column(String(30))
     capabilities: Mapped[list] = mapped_column(JSON, default=list)  # legacy JSON capabilities
+    status: Mapped[str] = mapped_column(String(30), default="VERIFIED", index=True)  # DRAFT | SUBMITTED | UNDER_REVIEW | VERIFIED | REJECTED | SUSPENDED | INACTIVE
+    hospital_type: Mapped[str] = mapped_column(String(50), default="GENERAL")  # GENERAL | TERTIARY_CARE | TRAUMA_CENTER | SPECIALTY
+    contact_email: Mapped[str | None] = mapped_column(String(120))
+    verification_notes: Mapped[str | None] = mapped_column(Text)
+    verified_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verification_notes: Mapped[str | None] = mapped_column(Text)
+    verification_source: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
     resources: Mapped[list["HospitalResource"]] = relationship(back_populates="hospital")
+    verified_by: Mapped["User | None"] = relationship(foreign_keys=[verified_by_user_id])
 
     # New Domain Relationships
     departments: Mapped[list["HospitalDepartment"]] = relationship(back_populates="hospital", cascade="all, delete-orphan")
@@ -98,6 +110,8 @@ class HospitalCapability(Base):
     verification_status: Mapped[str] = mapped_column(String(30), default="UNVERIFIED")  # UNVERIFIED | REVIEWED | VERIFIED | SUSPENDED
     verified_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verification_notes: Mapped[str | None] = mapped_column(Text)
+    verification_source: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
