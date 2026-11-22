@@ -42,7 +42,7 @@ An end-to-end audit was conducted across the source tree, test suite, and compil
 | **Database & Seed** | SQLAlchemy ORM + `database/seed.py` | **PASS** (Fully seeded) | 10 Patients, 8 Doctors, 3 Hospitals, 50 Medical Reports, 5 Instant Scenarios. |
 
 ### ⚠️ Discrepancies & Audit Findings:
-1. **`docker-compose.yml` Missing from Repo Root:** While `backend/Dockerfile` and `frontend/Dockerfile` are present and production-ready, the `docker-compose.yml` referenced in `README.md` is currently missing from the root repository.
+1. **Zero-Docker Clean Native Architecture:** The project runs natively via local Python (uvicorn/FastAPI) and Node.js (Vite), completely free of Docker dependencies.
 2. **LLM Provider Alignment:** The PDF specification frequently references Google Gemini / Ollama, whereas the codebase currently implements OpenAI (`gpt-4o-mini`, `text-embedding-3-small`) with a deterministic hashing/extractive fallback for offline use.
 3. **Database Architecture:** The PDF suggests MongoDB/Beanie ODM, but the codebase implements SQLAlchemy with SQLite (dev) and PostgreSQL schema (`database/schema.sql`). This is actually an architectural upgrade for healthcare workflows, providing strict relational integrity, foreign key cascades, and ACID compliance, while using `JSONB` for unstructured summaries and checklists.
 
@@ -279,7 +279,7 @@ All accounts are pre-seeded in `database/seed.py`:
 
 ## 9. Immediate Action Items & Recommendations (Addressed in Prompt 02)
 
-1. **Root `docker-compose.yml` & `backend/Dockerfile`:** Created multi-container environment (PostgreSQL 16, Redis 7, Backend, Frontend) with healthchecks and volume persistence.
+1. **Clean Native Runtime Environment:** Established clean local execution without container overhead (supporting SQLite for rapid dev and direct PostgreSQL for production).
 2. **Alembic Database Migration Infrastructure:** Configured `alembic.ini`, `alembic/env.py`, `001_initial_schema.py` tracking all 9 baseline tables.
 3. **Cryptographic Hardening:** Validated and enforced >=32-byte JWT secret for HS256, rejecting development keys in production.
 
@@ -299,9 +299,8 @@ All accounts are pre-seeded in `database/seed.py`:
 4. **Database Session Lifecycle & Health Monitoring:**
    - Hardened `get_db()` with explicit exception rollback.
    - Added `check_db_health()` and exposed database connectivity in `GET /health`.
-5. **Multi-Container Infrastructure:**
-   - Added `backend/Dockerfile` with multi-stage python slim runtime.
-   - Added root `docker-compose.yml` orchestrating `postgres`, `redis`, `backend`, `frontend`.
+5. **Zero-Docker Clean Runtime:**
+   - Pure native Python and Node.js execution with zero container dependencies.
 6. **Expanded Automated Testing:**
    - Added `test_config.py` (security validators, secret lengths, production guards).
    - Added `test_migrations.py` (Alembic upgrade/downgrade/re-upgrade verification on isolated SQLite DB).

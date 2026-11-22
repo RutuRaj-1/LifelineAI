@@ -7,16 +7,7 @@ A working 60% MVP: patient SOS → AI-assisted, evidence-cited medical brief fro
 hospital routing → doctor assignment → room reservation → live tracking for the family — all with
 **AI that only summarizes, never diagnoses**, and a doctor in the loop for every clinical decision.
 
-## Quick start (Docker, zero API keys required)
-
-```bash
-cp .env.example .env
-docker compose up --build
-docker compose exec backend python database/seed.py   # first run only
-```
-- App: http://localhost:3000 · API docs: http://localhost:8000/docs
-
-## Quick start (local dev)
+## Quick start (Local Development)
 
 ```bash
 # Backend
@@ -94,7 +85,6 @@ lifeLineAI/
 │   └── tests/       pytest — auth + full emergency-pipeline end-to-end test
 ├── ai/              OCR, chunking, embeddings, FAISS, RAG, summarizer, agents, LangGraph
 ├── database/        seed.py (10 patients / 8 doctors / 3 hospitals / 50 reports / 5 scenarios), schema.sql
-├── docker/          Docker notes (see also docker-compose.yml, backend/Dockerfile, frontend/Dockerfile)
 ├── docs/            API.md, ARCHITECTURE.md
 └── .github/workflows/ci.yml
 ```

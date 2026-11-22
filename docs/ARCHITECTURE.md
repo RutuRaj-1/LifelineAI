@@ -59,4 +59,4 @@ Every external dependency degrades gracefully instead of crashing the emergency 
 - No Redis → `app/cache.py` falls back to an in-process dict.
 - No `langgraph` → `ai/graph.py` falls back to a plain sequential runner with the same node functions.
 
-This is what lets `docker compose up` produce a fully working demo with zero API keys.
+This produces a fully working local demo with zero API keys.
