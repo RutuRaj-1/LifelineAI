@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import models  # noqa: F401 - registers models on Base.metadata
 from .config import get_settings
-from .db import Base, engine
+from .db import Base, check_db_health, engine
 from .routers import ai_routes, auth, doctor, emergency, hospital, notifications, patient, scenarios
 from .ws import router as ws_router
 
@@ -20,7 +20,12 @@ async def lifespan(_: FastAPI):
 
     from .services.runner import bind_loop
 
-    Base.metadata.create_all(bind=engine)  # for a first run without Alembic; see database/schema.sql for migrations
+    # In development/test environments, auto-create tables if running without migrations
+    if settings.app_env in ("development", "test"):
+        Base.metadata.create_all(bind=engine)
+    else:
+        logging.getLogger("uvicorn.info").info("Production mode: schema managed via Alembic migrations.")
+
     bind_loop(asyncio.get_running_loop())
     yield
 
@@ -38,7 +43,13 @@ app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.co
 
 @app.get("/health", tags=["System"])
 def health():
-    return {"status": "ok", "service": "lifeline-ai-backend", "version": app.version}
+    db_ok = check_db_health()
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "service": "lifeline-ai-backend",
+        "version": app.version,
+        "database": "connected" if db_ok else "unreachable",
+    }
 
 
 for r in (auth.router, patient.router, emergency.router, doctor.router, hospital.router, ai_routes.router,

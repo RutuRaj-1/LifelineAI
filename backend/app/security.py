@@ -27,12 +27,17 @@ def verify_password(p: str, h: str) -> bool:
 def create_token(user: User) -> str:
     s = get_settings()
     exp = datetime.now(timezone.utc) + timedelta(minutes=s.jwt_expire_minutes)
-    return jwt.encode({"sub": str(user.id), "role": user.role, "exp": exp}, s.jwt_secret, algorithm="HS256")
+    return jwt.encode(
+        {"sub": str(user.id), "role": user.role, "exp": exp},
+        s.jwt_secret,
+        algorithm=s.jwt_algorithm,
+    )
 
 
 def decode_token(token: str) -> int:
+    s = get_settings()
     try:
-        return int(jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"])["sub"])
+        return int(jwt.decode(token, s.jwt_secret, algorithms=[s.jwt_algorithm])["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token")
 
