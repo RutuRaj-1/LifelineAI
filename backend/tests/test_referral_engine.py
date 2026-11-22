@@ -309,10 +309,20 @@ def test_hospital_inbox_and_isolation(client, referral_fixture):
     bad_view = client.get(f"/api/hospital/referrals/{ref_beta_id}", headers=_auth_header(token_alpha))
     assert bad_view.status_code == 404
 
-    # 4. Opening referral detail transitions status from SENT to REVIEWING
+    # 4. GET referral detail is strictly read-only and does NOT mutate state
     detail_resp = client.get(f"/api/hospital/referrals/{ref_alpha_id}", headers=_auth_header(token_alpha))
     assert detail_resp.status_code == 200
-    assert detail_resp.json()["status"] == "REVIEWING"
+    assert detail_resp.json()["status"] == "SENT"
+
+    # Explicit POST review action transitions status from SENT to REVIEWING
+    review_resp = client.post(f"/api/hospital/referrals/{ref_alpha_id}/review", headers=_auth_header(token_alpha))
+    assert review_resp.status_code == 200
+    assert review_resp.json()["status"] == "REVIEWING"
+
+    # Subsequent GET verifies status is preserved without unintended mutation
+    detail_resp2 = client.get(f"/api/hospital/referrals/{ref_alpha_id}", headers=_auth_header(token_alpha))
+    assert detail_resp2.status_code == 200
+    assert detail_resp2.json()["status"] == "REVIEWING"
 
 
 # ==============================================================================

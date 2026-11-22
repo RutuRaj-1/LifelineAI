@@ -17,6 +17,9 @@ from ..models import (
     ReferralResponse,
     ResourceReservation,
     ResourceStatusHistory,
+    ClinicalHandover,
+    EmergencyIncidentReport,
+    HandoverAcknowledgement,
 )
 
 
@@ -272,6 +275,11 @@ def case_dict(c: EmergencyCase, role: str, detail: bool = False) -> dict:
         "eta_minutes": c.eta_minutes,
         "initial_eta_minutes": c.initial_eta_minutes,
         "specialty": c.specialty,
+        "origin_type": getattr(c, "origin_type", "PATIENT_SOS"),
+        "handover_status": getattr(c, "handover_status", "PENDING"),
+        "location_source": getattr(c, "location_source", "DEVICE_GPS"),
+        "location_accuracy_meters": getattr(c, "location_accuracy_meters", None),
+        "current_handover_id": getattr(c, "current_handover_id", None),
         "reserved_resources": c.reserved_resources or [],
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "updated_at": c.updated_at.isoformat() if c.updated_at else None,
@@ -373,3 +381,70 @@ def referral_request_dict(r: ReferralRequest, role: str = "hospital", detail: bo
         out["patient_summary"] = patient_summary
 
     return out
+
+
+def incident_report_dict(r: EmergencyIncidentReport) -> dict:
+    return {
+        "id": r.id,
+        "emergency_case_id": r.emergency_case_id,
+        "reporter_user_id": r.reporter_user_id,
+        "reporter_user_name": r.reporter_user.full_name if r.reporter_user else None,
+        "reporter_type": r.reporter_type,
+        "reporter_role": getattr(r, "reporter_role", None),
+        "report_type": r.report_type,
+        "reported_text": r.reported_text,
+        "observed_at": r.observed_at.isoformat() if r.observed_at else None,
+        "received_at": r.received_at.isoformat() if r.received_at else None,
+        "location_latitude": r.location_latitude,
+        "location_longitude": r.location_longitude,
+        "location_accuracy_meters": getattr(r, "location_accuracy_meters", None),
+        "verification_status": r.verification_status,
+        "parent_report_id": getattr(r, "parent_report_id", None),
+        "idempotency_key": getattr(r, "idempotency_key", None),
+        "audio_storage_url": getattr(r, "audio_storage_url", None),
+        "transcription_status": getattr(r, "transcription_status", "NONE"),
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
+
+
+def clinical_handover_dict(h: ClinicalHandover, role: str = "doctor") -> dict:
+    data = h.handover_data or {}
+    # If role == "family", redact detailed historical clinical notes per privacy policy
+    if role == "family":
+        data = {
+            "emergency_identification": data.get("emergency_identification"),
+            "non_diagnostic_disclaimer": data.get("non_diagnostic_disclaimer"),
+            "status": "Redacted for family view per patient privacy consent",
+        }
+
+    return {
+        "id": h.id,
+        "emergency_case_id": h.emergency_case_id,
+        "version": h.version,
+        "status": h.status,
+        "handover_data": data,
+        "is_current_approved": h.is_current_approved,
+        "approved_by_user_id": h.approved_by_user_id,
+        "approved_by_name": h.approved_by.full_name if h.approved_by else None,
+        "approved_at": h.approved_at.isoformat() if h.approved_at else None,
+        "approval_notes": h.approval_notes,
+        "rejection_reason": h.rejection_reason,
+        "acknowledgements_count": len(h.acknowledgements) if hasattr(h, "acknowledgements") and h.acknowledgements else 0,
+        "created_at": h.created_at.isoformat() if h.created_at else None,
+    }
+
+
+def handover_acknowledgement_dict(ack: HandoverAcknowledgement) -> dict:
+    return {
+        "id": ack.id,
+        "emergency_case_id": ack.emergency_case_id,
+        "hospital_id": ack.hospital_id,
+        "hospital_name": ack.hospital.name if ack.hospital else None,
+        "handover_id": ack.handover_id,
+        "handover_version": ack.handover.version if ack.handover else None,
+        "acknowledged_by_user_id": ack.acknowledged_by_user_id,
+        "acknowledged_by_name": ack.acknowledged_by.full_name if ack.acknowledged_by else None,
+        "acknowledged_at": ack.acknowledged_at.isoformat() if ack.acknowledged_at else None,
+        "status": ack.status,
+        "operational_remarks": ack.operational_remarks,
+    }

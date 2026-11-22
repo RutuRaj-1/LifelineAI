@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import uuid
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
@@ -489,7 +490,15 @@ def accept_referral(
     db.add(log)
 
     # Commit — Enforced by DB constraint uq_case_single_active_accepted
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Conflict: another hospital accepted this emergency referral concurrently.",
+        ) from exc
+
     db.refresh(referral)
 
     broadcast_referral_event("REFERRAL_ACCEPTED", referral)

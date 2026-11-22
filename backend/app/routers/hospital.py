@@ -32,11 +32,12 @@ from ..schemas import (
     ResourceConfigUpdate,
 )
 from ..security import require_roles
-from ..services import ops, referral_service, resource_service
+from ..services import emergency_service, ops, referral_service, resource_service
 from ..services.serialize import (
     capability_dict,
     case_dict,
     department_dict,
+    handover_acknowledgement_dict,
     hospital_dict,
     referral_request_dict,
     resource_dict,
@@ -604,6 +605,7 @@ def get_incoming_referral_detail(
 ):
     """
     Detailed clinical handover view for an incoming referral request.
+    Strictly read-only: does NOT mutate referral state.
     Data minimized: provides vital emergency context, allergies, verified facts, and requested resource.
     """
     h = _get_user_hospital(db, user)
@@ -611,12 +613,30 @@ def get_incoming_referral_detail(
     if not referral or referral.hospital_id != h.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Referral request not found at your hospital.")
 
-    # Automatically transition SENT -> REVIEWING on first opening
+    return referral_request_dict(referral, role="hospital", detail=True)
+
+
+@router.post("/referrals/{referral_id}/review")
+def mark_referral_under_review(
+    referral_id: int,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Explicit, authenticated action to mark an incoming referral as under clinical/administrative review (SENT -> REVIEWING).
+    Idempotent: if already REVIEWING, returns referral without error.
+    """
+    h = _get_user_hospital(db, user)
+    referral = db.get(ReferralRequest, referral_id)
+    if not referral or referral.hospital_id != h.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Referral request not found at your hospital.")
+
     if referral.status == "SENT":
         referral.status = "REVIEWING"
         referral.updated_at = utc_now()
         db.commit()
         db.refresh(referral)
+        referral_service.broadcast_referral_event("REFERRAL_REVIEWING", referral)
 
     return referral_request_dict(referral, role="hospital", detail=True)
 
@@ -682,3 +702,27 @@ def request_referral_clarification(
         question=body.question,
     )
     return referral_request_dict(clarified, role="hospital", detail=True)
+
+
+@router.post("/cases/{case_id}/arrival")
+def record_case_arrival(
+    case_id: int,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """Hospital confirms patient arrival and consumes reservation hold."""
+    c = emergency_service.record_patient_arrival(db, case_id, hospital_user=user)
+    return case_dict(c, user.role, detail=True)
+
+
+@router.post("/cases/{case_id}/handover/acknowledge", status_code=status.HTTP_201_CREATED)
+def acknowledge_case_handover(
+    case_id: int,
+    handover_id: int = Query(...),
+    remarks: str | None = None,
+    user: User = Depends(require_roles("hospital")),
+    db: Session = Depends(get_db),
+):
+    """Hospital acknowledges clinical handover receipt."""
+    ack = emergency_service.acknowledge_handover(db, case_id, hospital_user=user, handover_id=handover_id, operational_remarks=remarks)
+    return handover_acknowledgement_dict(ack)

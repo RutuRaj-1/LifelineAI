@@ -672,3 +672,120 @@ class ReferralEligibilityOut(BaseModel):
     requested_resource_type: str
     referral_round: int
     eligible_hospitals: list[EligibleHospitalItem] = []
+
+
+# ==============================================================================
+# Prompt 08: Emergency Orchestration & Clinical Handover Schemas
+# ==============================================================================
+
+class SOSInitiateIn(BaseModel):
+    emergency_type: str = Field(..., description="Emergency type, e.g. stroke, cardiac, trauma, etc.")
+    symptoms: str | None = None
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lng: float = Field(..., ge=-180.0, le=180.0)
+    origin_type: str = "PATIENT_SOS"
+    patient_id: int | None = None
+    location_source: str = "DEVICE_GPS"
+    location_accuracy_meters: float | None = None
+    idempotency_key: str | None = None
+
+
+class EmergencyLocationUpdateIn(BaseModel):
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lng: float = Field(..., ge=-180.0, le=180.0)
+    location_source: str = "DEVICE_GPS"
+    location_accuracy_meters: float | None = None
+
+
+class EmergencyIncidentReportIn(BaseModel):
+    reported_text: str = Field(..., min_length=2)
+    reporter_type: str = "PATIENT"  # PATIENT | FAMILY | BYSTANDER | AMBULANCE | DISPATCHER | DOCTOR | OTHER
+    report_type: str = "TEXT"  # TEXT | VOICE_TRANSCRIPTION | VITALS | OBSERVATION | OTHER
+    observed_at: datetime | None = None
+    location_latitude: float | None = None
+    location_longitude: float | None = None
+    location_accuracy_meters: float | None = None
+    audio_storage_url: str | None = None
+    transcription_status: str = "NONE"
+    parent_report_id: int | None = None
+    idempotency_key: str | None = None
+
+
+class EmergencyIncidentReportOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    reporter_user_id: int | None = None
+    reporter_user_name: str | None = None
+    reporter_type: str
+    report_type: str
+    reported_text: str
+    observed_at: datetime | None = None
+    received_at: datetime
+    location_latitude: float | None = None
+    location_longitude: float | None = None
+    location_accuracy_meters: float | None = None
+    verification_status: str
+    parent_report_id: int | None = None
+    idempotency_key: str | None = None
+    audio_storage_url: str | None = None
+    transcription_status: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmergencyStatusUpdateIn(BaseModel):
+    status: str
+    reason: str | None = None
+
+
+class ClinicalHandoverGenerateIn(BaseModel):
+    notes: str | None = None
+
+
+class ClinicalHandoverApproveIn(BaseModel):
+    approval_notes: str | None = None
+
+
+class ClinicalHandoverRejectIn(BaseModel):
+    rejection_reason: str = Field(..., min_length=2)
+
+
+class ClinicalHandoverOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    version: int
+    status: str
+    handover_data: dict
+    created_at: datetime
+    approved_by_user_id: int | None = None
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
+    approval_notes: str | None = None
+    rejection_reason: str | None = None
+    is_current_approved: bool
+    acknowledgements_count: int = 0
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EmergencyArrivalIn(BaseModel):
+    remarks: str | None = None
+
+
+class HandoverAcknowledgeIn(BaseModel):
+    handover_id: int
+    operational_remarks: str | None = None
+
+
+class HandoverAcknowledgementOut(BaseModel):
+    id: int
+    emergency_case_id: int
+    hospital_id: int
+    hospital_name: str | None = None
+    handover_id: int
+    handover_version: int | None = None
+    acknowledged_by_user_id: int
+    acknowledged_by_name: str | None = None
+    acknowledged_at: datetime
+    status: str
+    operational_remarks: str | None = None
+    model_config = ConfigDict(from_attributes=True)

@@ -493,3 +493,51 @@ Prompt 07 implements the multi-hospital referral engine and explicit acceptance 
 - **Alembic Migration Verification:** Full migration chain `001 -> 002 -> 003 -> 004 -> 001 -> base -> head` verified in `backend/tests/test_migrations.py`.
 - **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 288.51 kB in 1.24s).
 - **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.
+
+---
+
+## 16. Prompt 08 Implementation — Emergency Orchestration, Live Incident Intake, Evidence-Grounded Clinical Handover & Referral Coordination
+
+### 16.1 Critical Gate Verifications & Architectural Hardening
+- **Read-Only GET Endpoints (Critical Gate 3.3):**
+  - Removed state mutation side effects from `GET /api/hospital/referrals/{id}`. Repeated GET calls do not alter referral state.
+  - Introduced explicit authenticated action `POST /api/hospital/referrals/{id}/review` that idempotently transitions referrals from `SENT` to `REVIEWING`.
+- **Concurrent Acceptance Race Condition & Transaction Rollback (Critical Gate 3.1 & 3.2):**
+  - Added rigorous multi-session concurrency tests verifying that when two hospitals attempt acceptance simultaneously, exactly ONE succeeds (`ACCEPTED` with confirmed reservation) while the second is strictly rejected with `HTTP 409 Conflict`.
+  - Transaction atomicity: if reservation creation or capacity checks fail, the entire transaction rolls back, leaving no orphaned acceptance or assigned emergency case.
+
+### 16.2 Key Subsystems & Implementations
+- **Emergency Lifecycle & SOS Initiation (`backend/app/services/emergency_service.py:initiate_sos`):**
+  - Supports role-based initiation: patient SOS, family-assisted SOS for linked patients, and doctor/coordinator emergency creation.
+  - Strict idempotency via `idempotency_key` (String(100), unique index) prevents duplicate case creation on network retry.
+  - Active case collision guard: rejects concurrent active emergencies for the same patient (`HTTP 409 Conflict`).
+  - Captures location context, accuracy radius (`location_accuracy_meters`), and location source (`DEVICE_GPS`, `MANUAL_PIN`).
+- **Live Incident Intake & Evidence Preservation (`submit_incident_report`):**
+  - Captures incident observations from patients, family members, bystanders/witnesses, and emergency doctors.
+  - Preserves original raw reports as append-only historical records.
+  - Corrections and amendments link to `parent_report_id` without overwriting the original witness statement.
+  - Provenance classification distinguishes lay witness observations from clinician-confirmed observations.
+- **Evidence-Grounded Clinical Handover Engine (`backend/app/services/handover_service.py`):**
+  - Synthesizes live incident reports and historical patient context (Prompt 04 clinical facts, OCR extracts).
+  - Strict AI Safety Boundary: enforces non-diagnostic rules; never prescribes, diagnoses, or suggests treatment.
+  - Explicit Missing Information Warnings: prevents converting missing documentation into negative findings (e.g. explicitly warns that absence of allergy documentation does NOT indicate absence of allergies).
+  - Human Approval Gate: Clinical handovers are generated in `PENDING_REVIEW` status and require explicit review and approval by an authorized physician (`POST /api/emergency/{id}/handover/{version_id}/approve`) before being shared with hospitals.
+  - Immutable Versioning: Subsequent incident reports generate new handover versions (v2, v3...), preserving prior versions and approval records.
+- **Receiving-Hospital Arrival & Reservation Consumption (`record_patient_arrival`):**
+  - Authorized receiving-hospital staff records physical patient arrival.
+  - Idempotently consumes the confirmed `ResourceReservation` via `resource_service.consume_reservation`. Occupancy is incremented exactly once without double-counting holds.
+- **Authoritative Handover Acknowledgement (`acknowledge_handover`):**
+  - Receiving hospital staff acknowledges receipt of approved clinical handover version, creating an auditable `HandoverAcknowledgement` record.
+- **Alembic Migration `005_emergency_orchestration_and_handovers`:**
+  - Created tables `clinical_handovers` and `handover_acknowledgements`.
+  - Extended `emergency_cases` with `idempotency_key`, `location_source`, `location_accuracy_meters`, and `current_handover_id`.
+  - Extended `emergency_incident_reports` with `parent_report_id`, `idempotency_key`, `reporter_role`, `audio_storage_url`, `transcription_status`, and `location_accuracy_meters`.
+- **Frontend Workspaces (`HospitalDashboard.tsx`, `api.ts`):**
+  - Added `emergencyOrchApi` client for SOS initiation, incident submission, handover review/approval, arrival recording, and acknowledgement.
+  - Hospital workspace: explicit review transition trigger, "Confirm Arrival" action button, and Handover details modal with non-diagnostic disclaimer.
+
+### 16.3 Automated Verification Matrix
+- **Backend Tests:** **56/56 passed** (48 baseline + 8 new integration and regression tests in `backend/tests/test_emergency_orchestration.py` covering read-only GET endpoints, concurrent acceptance invariants, transaction rollback atomicity, SOS idempotency, family-assisted SOS, incident intake with corrections linking, clinical handover approval workflow with missing data warnings, and arrival reservation consumption).
+- **Alembic Migration Verification:** Full migration chain `001 -> 002 -> 003 -> 004 -> 005 -> 001 -> base -> head` verified in `backend/tests/test_migrations.py`.
+- **Frontend Production Build:** `tsc -b && vite build` succeeded with zero errors (production bundle: 289.86 kB in 1.38s).
+- **Git State:** Direct implementation on `main`, zero feature branches, zero Docker dependencies.

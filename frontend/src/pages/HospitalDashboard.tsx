@@ -3,6 +3,7 @@ import {
   api,
   CaseDetail,
   DoctorSummary,
+  emergencyOrchApi,
   HospitalCapability,
   HospitalDepartment,
   HospitalProfile,
@@ -708,7 +709,12 @@ export default function HospitalDashboard() {
                   {/* Action Buttons */}
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-navy-900/5">
                     <button
-                      onClick={() => setSelectedReferral(r)}
+                      onClick={() => {
+                        setSelectedReferral(r);
+                        if (r.status === "SENT") {
+                          referralApi.review(r.id).then(() => loadIncomingReferrals()).catch(() => {});
+                        }
+                      }}
                       className="text-xs font-medium text-teal-700 hover:text-teal-900 hover:underline"
                     >
                       📜 View Handover Details & Audit Trail ({r.responses?.length || 0})
@@ -748,9 +754,26 @@ export default function HospitalDashboard() {
                     )}
 
                     {r.status === "ACCEPTED" && (
-                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
-                        ✓ Accepted & Capacity Reserved
-                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
+                          ✓ Accepted & Capacity Reserved
+                        </span>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await emergencyOrchApi.recordArrival(r.emergency_case_id, "Physical patient arrival confirmed at emergency reception.");
+                              loadIncomingReferrals();
+                              refreshQueue();
+                              setRegistryMessage(`Patient arrival confirmed for Case #${r.emergency_case_id}. Resource reservation consumed.`);
+                            } catch (e: any) {
+                              setActionError(e.message || "Failed to confirm arrival");
+                            }
+                          }}
+                          className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 shadow-sm"
+                        >
+                          🏥 Confirm Arrival
+                        </button>
+                      </div>
                     )}
 
                     {r.status === "DECLINED" && (

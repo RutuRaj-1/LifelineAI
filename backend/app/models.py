@@ -20,12 +20,22 @@ from .db import Base
 
 STATUS_FLOW = [
     "CREATED",
+    "INITIATED",
     "PATIENT_IDENTIFIED",
+    "INTAKE_IN_PROGRESS",
     "SUMMARY_GENERATED",
+    "COORDINATION_ACTIVE",
     "DOCTOR_ASSIGNED",
     "ROOM_RESERVED",
+    "REFERRAL_IN_PROGRESS",
+    "HOSPITAL_ACCEPTED",
+    "IN_TRANSIT",
     "PATIENT_ARRIVED",
+    "ARRIVED",
+    "HANDOVER_COMPLETED",
     "COMPLETED",
+    "CLOSED",
+    "CANCELLED",
 ]
 
 
@@ -315,13 +325,28 @@ class EmergencyCase(Base):
     handover_status: Mapped[str] = mapped_column(String(30), default="PENDING")  # PENDING | IN_TRANSIT | ARRIVED | HANDOVER_COMPLETE | REFERRED_OUT
     handover_signed_by: Mapped[str | None] = mapped_column(String(120))
 
+    # Prompt 08 Additive Extensions: Idempotency, Location Context & Handover Link
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
+    location_source: Mapped[str] = mapped_column(String(40), default="DEVICE_GPS")  # DEVICE_GPS | MANUAL_PIN | SIMULATED | COORDINATOR_REPORTED
+    location_accuracy_meters: Mapped[float | None] = mapped_column(Float)
+    current_handover_id: Mapped[int | None] = mapped_column(ForeignKey("clinical_handovers.id", ondelete="SET NULL"), index=True)
+
     patient: Mapped[Patient] = relationship()
     hospital: Mapped[Hospital | None] = relationship()
     doctor: Mapped[Doctor | None] = relationship()
 
-    # Referral & Incident Report Relationships
+    # Referral, Incident Report & Clinical Handover Relationships
     referral_requests: Mapped[list["ReferralRequest"]] = relationship(back_populates="emergency_case", cascade="all, delete-orphan")
     incident_reports: Mapped[list["EmergencyIncidentReport"]] = relationship(back_populates="emergency_case", cascade="all, delete-orphan")
+    handovers: Mapped[list["ClinicalHandover"]] = relationship(
+        back_populates="emergency_case",
+        cascade="all, delete-orphan",
+        foreign_keys="ClinicalHandover.emergency_case_id",
+    )
+    current_handover: Mapped["ClinicalHandover | None"] = relationship(
+        foreign_keys=[current_handover_id],
+        post_update=True,
+    )
 
 
 class ReferralRequest(Base):
@@ -425,8 +450,61 @@ class EmergencyIncidentReport(Base):
     verification_status: Mapped[str] = mapped_column(String(30), default="UNVERIFIED")  # UNVERIFIED | REVIEWED | CLINICIAN_CONFIRMED | REJECTED
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
+    # Prompt 08 Extensions: Versioning/corrections, Idempotency, Audio & Provenance
+    parent_report_id: Mapped[int | None] = mapped_column(ForeignKey("emergency_incident_reports.id", ondelete="SET NULL"), index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
+    reporter_role: Mapped[str | None] = mapped_column(String(40))
+    audio_storage_url: Mapped[str | None] = mapped_column(String(500))
+    transcription_status: Mapped[str] = mapped_column(String(30), default="NONE")  # NONE | PENDING | TRANSCRIBED | MANUAL_ENTERED | UNAVAILABLE
+    location_accuracy_meters: Mapped[float | None] = mapped_column(Float)
+
     emergency_case: Mapped["EmergencyCase"] = relationship(back_populates="incident_reports")
     reporter_user: Mapped["User | None"] = relationship(foreign_keys=[reporter_user_id])
+    parent_report: Mapped["EmergencyIncidentReport | None"] = relationship(remote_side=[id])
+
+
+class ClinicalHandover(Base):
+    __tablename__ = "clinical_handovers"
+    __table_args__ = (
+        UniqueConstraint("emergency_case_id", "version", name="uq_case_handover_version"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emergency_case_id: Mapped[int] = mapped_column(ForeignKey("emergency_cases.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING_REVIEW", index=True)  # DRAFT | GENERATED | PENDING_REVIEW | APPROVED | SUPERSEDED | REJECTED
+    handover_data: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_notes: Mapped[str | None] = mapped_column(Text)
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    is_current_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    emergency_case: Mapped["EmergencyCase"] = relationship(
+        back_populates="handovers",
+        foreign_keys=[emergency_case_id],
+    )
+    approved_by: Mapped["User | None"] = relationship(foreign_keys=[approved_by_user_id])
+    acknowledgements: Mapped[list["HandoverAcknowledgement"]] = relationship(back_populates="handover", cascade="all, delete-orphan")
+
+
+class HandoverAcknowledgement(Base):
+    __tablename__ = "handover_acknowledgements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    emergency_case_id: Mapped[int] = mapped_column(ForeignKey("emergency_cases.id", ondelete="CASCADE"), index=True)
+    hospital_id: Mapped[int] = mapped_column(ForeignKey("hospitals.id", ondelete="CASCADE"), index=True)
+    handover_id: Mapped[int] = mapped_column(ForeignKey("clinical_handovers.id", ondelete="CASCADE"), index=True)
+    acknowledged_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    status: Mapped[str] = mapped_column(String(30), default="ACKNOWLEDGED")
+    operational_remarks: Mapped[str | None] = mapped_column(Text)
+
+    emergency_case: Mapped["EmergencyCase"] = relationship()
+    hospital: Mapped["Hospital"] = relationship()
+    handover: Mapped["ClinicalHandover"] = relationship(back_populates="acknowledgements")
+    acknowledged_by: Mapped["User"] = relationship(foreign_keys=[acknowledged_by_user_id])
 
 
 class Notification(Base):

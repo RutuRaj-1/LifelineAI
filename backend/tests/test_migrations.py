@@ -28,6 +28,8 @@ EXPECTED_DOMAIN_TABLES = EXPECTED_BASE_TABLES.union({
     "referral_responses",
     "resource_reservations",
     "emergency_incident_reports",
+    "clinical_handovers",
+    "handover_acknowledgements",
 })
 
 
@@ -64,6 +66,12 @@ def test_alembic_upgrade_and_downgrade_full_chain():
         ref_cols = {c["name"] for c in insp2.get_columns("referral_requests")}
         assert "requested_resource_type" in ref_cols
         assert "idempotency_key" in ref_cols
+        handover_cols = {c["name"] for c in insp2.get_columns("clinical_handovers")}
+        assert "handover_data" in handover_cols
+        assert "status" in handover_cols
+        case_cols = {c["name"] for c in insp2.get_columns("emergency_cases")}
+        assert "idempotency_key" in case_cols
+        assert "current_handover_id" in case_cols
         engine2.dispose()
 
         # 3. Downgrade back to 001_initial_schema

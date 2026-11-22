@@ -229,6 +229,10 @@ CREATE TABLE emergency_cases (
     case_closed_at TIMESTAMPTZ,
     handover_status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
     handover_signed_by VARCHAR(120),
+    idempotency_key VARCHAR(100) UNIQUE,
+    location_source VARCHAR(40) DEFAULT 'DEVICE_GPS',
+    location_accuracy_meters DOUBLE PRECISION,
+    current_handover_id INTEGER,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
     arrived_at TIMESTAMPTZ,
@@ -310,9 +314,48 @@ CREATE TABLE emergency_incident_reports (
     location_latitude DOUBLE PRECISION,
     location_longitude DOUBLE PRECISION,
     verification_status VARCHAR(30) NOT NULL DEFAULT 'UNVERIFIED',
+    parent_report_id INTEGER REFERENCES emergency_incident_reports(id) ON DELETE SET NULL,
+    idempotency_key VARCHAR(100) UNIQUE,
+    reporter_role VARCHAR(40),
+    audio_storage_url VARCHAR(500),
+    transcription_status VARCHAR(30) DEFAULT 'NONE',
+    location_accuracy_meters DOUBLE PRECISION,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX ix_emergency_incident_reports_emergency_case_id ON emergency_incident_reports(emergency_case_id);
+CREATE INDEX ix_emergency_incident_reports_parent_report_id ON emergency_incident_reports(parent_report_id);
+CREATE INDEX ix_emergency_incident_reports_idempotency_key ON emergency_incident_reports(idempotency_key);
+
+CREATE TABLE clinical_handovers (
+    id SERIAL PRIMARY KEY,
+    emergency_case_id INTEGER NOT NULL REFERENCES emergency_cases(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL DEFAULT 1,
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING_REVIEW',
+    handover_data JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    approved_by_user_id INTEGER REFERENCES users(id),
+    approved_at TIMESTAMPTZ,
+    approval_notes TEXT,
+    rejection_reason TEXT,
+    is_current_approved BOOLEAN NOT NULL DEFAULT false,
+    CONSTRAINT uq_case_handover_version UNIQUE (emergency_case_id, version)
+);
+CREATE INDEX ix_clinical_handovers_case_id ON clinical_handovers(emergency_case_id);
+CREATE INDEX ix_clinical_handovers_status ON clinical_handovers(status);
+
+CREATE TABLE handover_acknowledgements (
+    id SERIAL PRIMARY KEY,
+    emergency_case_id INTEGER NOT NULL REFERENCES emergency_cases(id) ON DELETE CASCADE,
+    hospital_id INTEGER NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
+    handover_id INTEGER NOT NULL REFERENCES clinical_handovers(id) ON DELETE CASCADE,
+    acknowledged_by_user_id INTEGER NOT NULL REFERENCES users(id),
+    acknowledged_at TIMESTAMPTZ DEFAULT now(),
+    status VARCHAR(30) NOT NULL DEFAULT 'ACKNOWLEDGED',
+    operational_remarks TEXT
+);
+CREATE INDEX ix_handover_acknowledgements_case_id ON handover_acknowledgements(emergency_case_id);
+CREATE INDEX ix_handover_acknowledgements_hospital_id ON handover_acknowledgements(hospital_id);
+CREATE INDEX ix_handover_acknowledgements_handover_id ON handover_acknowledgements(handover_id);
 
 CREATE TABLE notifications (
     id SERIAL PRIMARY KEY,

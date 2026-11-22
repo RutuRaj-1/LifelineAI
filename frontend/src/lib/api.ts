@@ -378,6 +378,9 @@ export const referralApi = {
   getDetail: (referralId: number) =>
     api.get<ReferralItem>(`/hospital/referrals/${referralId}`),
 
+  review: (referralId: number) =>
+    api.post<ReferralItem>(`/hospital/referrals/${referralId}/review`),
+
   accept: (referralId: number, notes?: string) =>
     api.post<ReferralItem>(`/hospital/referrals/${referralId}/accept`, { notes }),
 
@@ -392,4 +395,115 @@ export const referralApi = {
 
   cancel: (referralId: number, reason?: string) =>
     api.post<ReferralItem>(`/referrals/${referralId}/cancel`, { reason }),
+};
+
+// ==============================================================================
+// Prompt 08: Emergency Orchestration & Clinical Handover API
+// ==============================================================================
+
+export interface IncidentReportItem {
+  id: number;
+  emergency_case_id: number;
+  reporter_user_id?: number | null;
+  reporter_user_name?: string | null;
+  reporter_type: string;
+  reporter_role?: string | null;
+  report_type: string;
+  reported_text: string;
+  observed_at?: string | null;
+  received_at: string;
+  location_latitude?: number | null;
+  location_longitude?: number | null;
+  location_accuracy_meters?: number | null;
+  verification_status: string;
+  parent_report_id?: number | null;
+  idempotency_key?: string | null;
+  audio_storage_url?: string | null;
+  transcription_status?: string | null;
+  created_at: string;
+}
+
+export interface ClinicalHandoverItem {
+  id: number;
+  emergency_case_id: number;
+  version: number;
+  status: string;
+  handover_data: Record<string, any>;
+  is_current_approved: boolean;
+  approved_by_user_id?: number | null;
+  approved_by_name?: string | null;
+  approved_at?: string | null;
+  approval_notes?: string | null;
+  rejection_reason?: string | null;
+  acknowledgements_count?: number;
+  created_at: string;
+}
+
+export interface HandoverAcknowledgementItem {
+  id: number;
+  emergency_case_id: number;
+  hospital_id: number;
+  hospital_name?: string | null;
+  handover_id: number;
+  handover_version?: number | null;
+  acknowledged_by_user_id: number;
+  acknowledged_by_name?: string | null;
+  acknowledged_at: string;
+  status: string;
+  operational_remarks?: string | null;
+}
+
+export const emergencyOrchApi = {
+  triggerSos: (data: {
+    emergency_type: string;
+    symptoms?: string;
+    lat: number;
+    lng: number;
+    origin_type?: string;
+    location_source?: string;
+    location_accuracy_meters?: number;
+    idempotency_key?: string;
+  }) => api.post<CaseDetail>("/emergency/sos", data),
+
+  submitIncident: (
+    caseId: number,
+    data: {
+      reported_text: string;
+      reporter_type?: string;
+      report_type?: string;
+      observed_at?: string;
+      location_latitude?: number;
+      location_longitude?: number;
+      location_accuracy_meters?: number;
+      parent_report_id?: number;
+      idempotency_key?: string;
+    }
+  ) => api.post<IncidentReportItem>(`/emergency/${caseId}/incidents`, data),
+
+  getIncidents: (caseId: number) =>
+    api.get<IncidentReportItem[]>(`/emergency/${caseId}/incidents`),
+
+  generateHandover: (caseId: number, notes?: string) =>
+    api.post<ClinicalHandoverItem>(`/emergency/${caseId}/handover/generate`, { notes }),
+
+  getHandover: (caseId: number) =>
+    api.get<ClinicalHandoverItem>(`/emergency/${caseId}/handover`),
+
+  getHandoverVersion: (caseId: number, handoverId: number) =>
+    api.get<ClinicalHandoverItem>(`/emergency/${caseId}/handover/${handoverId}`),
+
+  approveHandover: (caseId: number, handoverId: number, notes?: string) =>
+    api.post<ClinicalHandoverItem>(`/emergency/${caseId}/handover/${handoverId}/approve`, { approval_notes: notes }),
+
+  rejectHandover: (caseId: number, handoverId: number, reason: string) =>
+    api.post<ClinicalHandoverItem>(`/emergency/${caseId}/handover/${handoverId}/reject`, { rejection_reason: reason }),
+
+  recordArrival: (caseId: number, remarks?: string) =>
+    api.post<CaseDetail>(`/emergency/${caseId}/arrival`, { remarks }),
+
+  acknowledgeHandover: (caseId: number, handoverId: number, remarks?: string) =>
+    api.post<HandoverAcknowledgementItem>(`/emergency/${caseId}/handover/acknowledge`, {
+      handover_id: handoverId,
+      operational_remarks: remarks,
+    }),
 };

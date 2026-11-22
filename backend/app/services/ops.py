@@ -8,7 +8,10 @@ from . import notifier
 
 
 def status_idx(s: str) -> int:
-    return STATUS_FLOW.index(s)
+    try:
+        return STATUS_FLOW.index(s)
+    except (ValueError, AttributeError):
+        return 0
 
 
 def log_event(db: Session, case_id: int, event: str, detail: str, actor: str = "system") -> None:
