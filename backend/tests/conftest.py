@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "backend"))
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{ROOT / 'backend' / 'test.db'}")
+os.environ.setdefault("JWT_SECRET", "lifeline-test-secret-key-min-32-chars-long-abc123-secure")
 os.environ.setdefault("SIMULATE_TRAVEL", "false")  # keep tests deterministic/fast
 os.environ.setdefault("PIPELINE_STEP_DELAY", "0")
 
