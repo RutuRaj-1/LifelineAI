@@ -308,3 +308,55 @@ All accounts are pre-seeded in `database/seed.py`:
    - Added `test_db_lifecycle.py` (session cleanup, rollback on exception, `/health` reporting).
    - Test results: **17/17 passed** in 11.93s with zero key length warnings.
    - Frontend production build: **Passed** (`dist/` generated cleanly in 1.48s).
+
+---
+
+## 11. Domain Model Evolution — Prompt 03 Completion Report
+
+### 11.1 Executive Summary
+In Prompt 03, the relational domain was evolved from an emergency SOS + summarization baseline to an **Emergency Healthcare Readiness & Referral Coordination Platform**. The data architecture now establishes the foundations for three interconnected domains:
+1. **Patient Intelligence & Clinical Provenance:** Structured medical facts (`patient_clinical_facts`) linked to traceable evidence sources (`clinical_provenance`) with verification states.
+2. **Hospital Readiness Intelligence:** Normalized hospital departments (`hospital_departments`), granular capabilities (`hospital_capabilities`), operational resource metrics (`hospital_resources`), audit history (`resource_status_history`), and specialist availability shifts (`specialist_availabilities`).
+3. **Emergency Referral Coordination:** Multi-hospital referral fanout (`referral_requests`), multi-round response tracking (`referral_responses`), resource reservations (`resource_reservations`) with idempotency constraints, and live incident intake reports (`emergency_incident_reports`).
+
+### 11.2 Database Entities & Relationship Overview
+
+```mermaid
+erDiagram
+    Hospital ||--o{ HospitalDepartment : "contains"
+    Hospital ||--o{ HospitalCapability : "offers"
+    Hospital ||--o{ HospitalResource : "manages"
+    Hospital ||--o{ Doctor : "employs"
+    HospitalDepartment ||--o{ HospitalCapability : "categorizes"
+    HospitalDepartment ||--o{ HospitalResource : "allocates"
+    HospitalDepartment ||--o{ SpecialistAvailability : "assigns"
+    HospitalResource ||--o{ ResourceStatusHistory : "audits"
+    HospitalResource ||--o{ ResourceReservation : "holds"
+    Doctor ||--o{ SpecialistAvailability : "schedules"
+    Patient ||--o{ PatientClinicalFact : "possesses"
+    PatientClinicalFact ||--o{ ClinicalProvenance : "backed_by"
+    MedicalReport ||--o{ ClinicalProvenance : "evidences"
+    EmergencyCase ||--o{ ReferralRequest : "fans_out"
+    EmergencyCase ||--o{ EmergencyIncidentReport : "logs"
+    ReferralRequest ||--o{ ReferralResponse : "tracks"
+    ReferralRequest ||--o{ ResourceReservation : "reserves"
+```
+
+### 11.3 Extended Existing Models
+- **`HospitalResource`**: Extended with `department_id`, `operational_status`, `staffed_capacity`, `occupied_count`, `maintenance_count`, `last_verified_at`, `status_source`, and non-negative check constraints.
+- **`EmergencyCase`**: Extended with `origin_type`, `referral_round`, `case_closed_at`, `handover_status`, and `handover_signed_by`.
+
+### 11.4 Integrity & Critical Acceptance Rules
+- **Single Active Accepted Referral Per Emergency:** Enforced via cross-compatible partial unique index:
+  `CREATE UNIQUE INDEX uq_case_single_active_accepted ON referral_requests(emergency_case_id) WHERE status = 'ACCEPTED';`
+  An emergency can broadcast referral requests to multiple candidate hospitals, but cannot have multiple simultaneously accepted receiving hospitals.
+- **Idempotent Resource Reservation:** Guaranteed via `idempotency_key` unique constraint and positive quantity check constraint (`quantity > 0`).
+- **Data Provenance Preservation:** Clinical facts are never marked `VERIFIED` by automated OCR; they start as `UNVERIFIED` or `REVIEWED` and require a clinician user ID for verification.
+
+### 11.5 Historical Emergency Architecture Decision
+Rather than creating a redundant `HistoricalIncident` table that would duplicate patient and hospital keys, previous emergency cases are retrieved directly through `EmergencyCase` filtered by `status = 'COMPLETED'` or `case_closed_at IS NOT NULL`. Post-emergency reconciliation and discharge summaries will be layered in Prompt 10.
+
+### 11.6 Automated Verification Matrix
+- **Total Backend Tests:** **26/26 passed** in 12.89s (17 baseline + 9 new domain & referral integrity tests).
+- **Alembic Migrations:** Full chain `001 -> 002 -> 001 -> base -> head` tested on isolated temporary database.
+- **Frontend Build:** `tsc -b && vite build` succeeded in 1.20s with zero regressions.
