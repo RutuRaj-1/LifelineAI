@@ -14,14 +14,6 @@
 ### **"Move Information Before the Patient, Not After."**
 *Preparing emergency departments, securing critical resources, and streaming evidence-grounded clinical intelligence before the patient arrives — even when there is no ambulance.*
 
----
-
-### 📋 Event Evaluation & Authenticity Notice
-**Off Campus Evaluation Code:** `2J3A5Z`  
-*This repository is submitted for official project evaluation. Built from the ground up as a native, production-validated emergency coordination system.*
-
----
-
 </div>
 
 ## 📌 Executive Summary & Clinical Problem
