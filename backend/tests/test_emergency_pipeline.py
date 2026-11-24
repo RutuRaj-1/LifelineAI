@@ -37,8 +37,10 @@ def _seed_hospital(client, tag="e2e"):
 
 
 def test_full_emergency_pipeline(client):
-    hospital_id, hospital_name = _seed_hospital(client, "e2e")
-    token, user = _register(client, "patient-e2e@example.com")
+    import uuid
+    u = uuid.uuid4().hex[:6]
+    hospital_id, hospital_name = _seed_hospital(client, f"e2e_{u}")
+    token, user = _register(client, f"patient-e2e-{u}@example.com")
 
     # Upload a report containing a clear, extractable fact set
     report = (

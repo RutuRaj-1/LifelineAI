@@ -34,13 +34,28 @@ def _firebase_bucket():
 
     s = get_settings()
     if not firebase_admin._apps:
-        firebase_admin.initialize_app(credentials.Certificate(s.firebase_credentials_path),
-                                      {"storageBucket": s.firebase_storage_bucket})
+        options = {"storageBucket": s.firebase_storage_bucket}
+        if s.firebase_project_id:
+            options["projectId"] = s.firebase_project_id
+        if s.firebase_credentials_path and Path(s.firebase_credentials_path).exists():
+            cred = credentials.Certificate(s.firebase_credentials_path)
+            firebase_admin.initialize_app(cred, options)
+        else:
+            firebase_admin.initialize_app(options=options)
     return storage.bucket()
 
 
 def firebase_signed_url(ref: str) -> str:
     from datetime import timedelta
 
-    blob = _firebase_bucket().blob(ref.split("/", 3)[3])
-    return blob.generate_signed_url(expiration=timedelta(minutes=10))
+    s = get_settings()
+    try:
+        blob_path = ref.split("/", 3)[3] if ref.startswith("gs://") else ref
+        blob = _firebase_bucket().blob(blob_path)
+        return blob.generate_signed_url(expiration=timedelta(minutes=10))
+    except Exception:
+        # Fallback to direct public Firebase Storage URL format
+        raw_path = ref.split("/", 3)[3] if ref.startswith("gs://") else ref
+        encoded_path = raw_path.replace("/", "%2F")
+        bucket = s.firebase_storage_bucket or "lifeline-ai-cdabc.firebasestorage.app"
+        return f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{encoded_path}?alt=media"

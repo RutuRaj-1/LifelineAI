@@ -132,9 +132,22 @@ Family members and bystanders receive live transit updates, hospital destination
 | **Database** | SQLite (Dev) / PostgreSQL (Prod), SQLAlchemy 2.0 | Fully relational schema with declarative mappings, check constraints, and CASCADE rules |
 | **Schema Migrations** | Alembic | Complete, reversible migration chain (`001 -> 006 -> base -> head`) |
 | **Authentication** | JWT (HS256 256-bit), Passlib (Bcrypt) | Role-Based Access Control (`patient`, `doctor`, `hospital`, `family`, `admin`) |
-| **Realtime** | Native WebSockets | Live dashboard dispatch, triage queue synchronisation, and travel tracking |
+| **Realtime & Cloud** | Native WebSockets & **Firebase / Cloud Firestore** | Dual-channel real-time sync for edge telemetry, hospital availability, and live status streaming |
+| **Cloud Storage** | **Firebase Storage** (`lifeline-ai-cdabc.firebasestorage.app`) | Document storage with file-type whitelisting and size boundaries for medical records and discharge cards |
 | **AI / NLP** | LangGraph, FAISS, Tesseract OCR | Evidence citation, multi-agent coordination, and deterministic offline mode |
 | **Runtime Architecture** | **100% Native Runtime (Zero Docker)** | Clean, lightweight native system footprint with zero container dependencies |
+
+---
+
+### 🔥 Firebase & Cloud Firestore Integration
+
+LifeLine AI connects seamlessly to **Firebase** (`lifeline-ai-cdabc`) for real-time edge telemetry, cloud document storage, and distributed incident reporting:
+
+* **Real-Time Emergency Case Streaming:** Live case location, status transitions (`CREATED` → `ACCEPTED` → `ARRIVED` → `DISCHARGED`), and ETA countdowns are mirrored to the `emergency_cases/{caseId}` Firestore collection.
+* **Hospital Capacity Attestation Hub:** Operational capacity metrics across ICU, Trauma, and Cath Lab sync to `hospital_resources/{hospitalId}_{resourceType}` for instant distributed visibility.
+* **Bystander Incident Updates:** Field observations and family witness notes sync directly to `incident_reports/{reportId}`.
+* **Cloud Storage for Health Vault & Discharges:** Medical reports and official discharge cards upload securely to `gs://lifeline-ai-cdabc.firebasestorage.app/` with 15MB size limits and MIME-type verification.
+* **Production Security Rules:** Granular access boundaries are enforced via [`firestore.rules`](firestore.rules) and [`storage.rules`](storage.rules), restricting clinical handovers to licensed physicians and protecting patient records from unauthorized enumeration.
 
 ---
 

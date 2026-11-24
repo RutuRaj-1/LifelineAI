@@ -29,7 +29,8 @@ class Settings(BaseSettings):
     google_maps_api_key: str = ""
     storage_backend: str = "local"  # local | firebase
     upload_dir: str = str(ROOT / "backend" / "uploads")
-    firebase_storage_bucket: str = ""
+    firebase_project_id: str = "lifeline-ai-cdabc"
+    firebase_storage_bucket: str = "lifeline-ai-cdabc.firebasestorage.app"
     firebase_credentials_path: str = ""
     twilio_account_sid: str = ""  # SMS is mocked (logged) unless all three are set AND SMS_LIVE=true
     twilio_auth_token: str = ""

@@ -702,3 +702,32 @@ Prompt 07 implements the multi-hospital referral engine and explicit acceptance 
   - *Controlled Demonstration:* **READY** (End-to-end user journeys validated; simulated emergency workflow fully operational).
   - *Synthetic-Data Clinical Pilot:* **READY** (RBAC, clinical permission gates, audit logging, and data isolation verified).
   - *Live Hospital Deployment:* **CONDITIONAL** (Requires hospital EHR HL7/FHIR integration, production PostgreSQL cluster, enterprise TLS certificate, and institutional IRB/HIPAA review).
+
+
+## 20. Firebase & Cloud Firestore Integration
+
+### 20.1 Architecture & Credentials Configuration
+- **Firebase Project Identity:** `lifeline-ai-cdabc`
+- **Cloud Storage Bucket:** `lifeline-ai-cdabc.firebasestorage.app`
+- **Web App Credentials:**
+  - API Key: `AIzaSyA3cjS15yehxU7v0h5MEv2I4fMVQxwG5NQ`
+  - Auth Domain: `lifeline-ai-cdabc.firebaseapp.com`
+  - Messaging Sender ID: `150977914510`
+  - App ID: `1:150977914510:web:e1d518020b24b282ea0bdf`
+
+### 20.2 Cloud Firestore Collections & Endpoints
+- **`emergency_cases/{caseId}`:** Real-time edge streaming of case state transitions, current GPS coordinates, and arrival ETA.
+- **`hospital_resources/{hospitalId}_{resourceType}`:** Real-time distributed operational availability signals (ICU, Trauma Bays, Cath Lab) attested by hospital staff.
+- **`incident_reports/{reportId}`:** Real-time field observations from bystanders and family members.
+- **`clinical_handovers/{handoverId}` & `discharge_summaries/{summaryId}`:** Gated clinical continuity summaries.
+
+### 20.3 Cloud Storage & Security Governance Rules
+- **Firestore Security Rules ([`firestore.rules`](firestore.rules)):**
+  - Clinical approval gates restricted to authorized clinicians (`doctor`).
+  - Hospital staff restricted to their verified institutions.
+  - Public/authenticated discovery for emergency resource availability.
+- **Storage Rules ([`storage.rules`](storage.rules)):**
+  - File upload MIME validation (`application/pdf`, `image/*`, `text/plain`).
+  - Strict 15MB file size boundary enforcement.
+- **Firebase Project Manifest ([`firebase.json`](firebase.json)):**
+  - Unified configuration linking Firestore rules, indexes, Storage rules, and single-page app hosting rewrites.

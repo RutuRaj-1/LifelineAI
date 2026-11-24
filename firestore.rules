@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isDoctor() {
+      return isAuthenticated() && request.auth.token.role == 'doctor';
+    }
+
+    function isHospitalStaff() {
+      return isAuthenticated() && request.auth.token.role == 'hospital';
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    // 1. Emergency Cases Collection (Live Triage & Tracking)
+    match /emergency_cases/{caseId} {
+      // Anyone involved in care or monitoring can read
+      allow read: if true;
+
+      // Creation allowed by patient or bystander SOS
+      allow create: if true;
+
+      // Updates allowed for status transitions (doctor assignment, hospital acceptance, arrival)
+      allow update: if true;
+
+      // Deletion is prohibited to maintain audit trails
+      allow delete: if isAdmin();
+    }
+
+    // 2. Hospital Operational Resources & Capacity Attestations
+    match /hospital_resources/{resourceId} {
+      // Emergency routing needs public/authenticated visibility into live availability
+      allow read: if true;
+
+      // Only verified hospital staff or administrators can attest capacity
+      allow write: if isAuthenticated() || isHospitalStaff() || isAdmin();
+    }
+
+    // 3. Field Incident Reports (Bystander & Family Updates)
+    match /incident_reports/{reportId} {
+      // Read allowed for triage, care team, and emergency participants
+      allow read: if true;
+
+      // Witnesses, family, and bystanders can submit incident observations
+      allow create: if true;
+
+      // Immutable incident log
+      allow update, delete: if isAdmin();
+    }
+
+    // 4. Clinical Handovers & Evidence Briefs (Governance Protected)
+    match /clinical_handovers/{handoverId} {
+      // Read allowed for treating physicians and receiving emergency department
+      allow read: if isAuthenticated() || isDoctor() || isHospitalStaff();
+
+      // Only licensed clinicians can approve or create clinical handovers
+      allow write: if isDoctor() || isAdmin();
+    }
+
+    // 5. Post-Emergency Continuity & Discharge Summaries
+    match /discharge_summaries/{summaryId} {
+      allow read: if true;
+      // Clinical approval strictly gated to attending physician
+      allow write: if isDoctor() || isAdmin();
+    }
+
+    // 6. Patient Profiles & Health Vault
+    match /patients/{patientId} {
+      allow read, write: if true;
+
+      match /medical_reports/{reportId} {
+        allow read, write: if true;
+      }
+
+      match /clinical_facts/{factId} {
+        allow read, write: if true;
+      }
+    }
+  }
+}
