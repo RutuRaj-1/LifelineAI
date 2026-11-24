@@ -710,7 +710,7 @@ Prompt 07 implements the multi-hospital referral engine and explicit acceptance 
 - **Firebase Project Identity:** `lifeline-ai-cdabc`
 - **Cloud Storage Bucket:** `lifeline-ai-cdabc.firebasestorage.app`
 - **Web App Credentials:**
-  - API Key: `AIzaSyA3cjS15yehxU7v0h5MEv2I4fMVQxwG5NQ`
+  - API Key: Configured via `VITE_FIREBASE_API_KEY` in local `.env`
   - Auth Domain: `lifeline-ai-cdabc.firebaseapp.com`
   - Messaging Sender ID: `150977914510`
   - App ID: `1:150977914510:web:e1d518020b24b282ea0bdf`

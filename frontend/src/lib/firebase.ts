@@ -30,7 +30,7 @@ import { getAuth, Auth } from "firebase/auth";
 
 // Firebase web application configuration
 export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyA3cjS15yehxU7v0h5MEv2I4fMVQxwG5NQ",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "lifeline-ai-cdabc.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "lifeline-ai-cdabc",
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "lifeline-ai-cdabc.firebasestorage.app",
